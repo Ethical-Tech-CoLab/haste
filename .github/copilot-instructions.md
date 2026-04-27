@@ -154,6 +154,19 @@ HASTE uses specialized agents with clear boundaries. Skills are preferred over a
 - The orchestrator **tracks spec status** and updates `plan.md` after agent work.
 - Architecture changes trigger an **ADR in `spec/architecture/decisions/`**.
 
+### Agent ↔ Story Mapping (Required)
+
+Every feature spec **must** map user stories to HASTE agents. This is enforced in the templates:
+
+- **`user-stories.md`** must include an **Agent Assignment Map** table: story → implementing agent + validating agent.
+- **`plan.md`** must use agent names (not people/roles) in the **Agent** column of task tables.
+- **Assignment rules:**
+  - `hastelib/`, `api/`, `docker/`, `.github/workflows/` → `backend-dev` implements, `backend-validation` validates.
+  - Satellite imagery, GDAL, provider adapters → `gis` implements or co-implements.
+  - `ui/` → `ui` implements, `ui-validation` validates.
+  - New dependencies → `security` audits, `security-validation` confirms.
+  - `orchestrator` tracks all work — does not need per-story assignment.
+
 ## Guardrails
 
 - **No auto-merge** of security fixes — humans remain in the approval loop.
