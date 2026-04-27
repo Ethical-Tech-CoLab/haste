@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "INPUT=$(cat 2>/dev/null || echo '{}'); TS=$(python3 -c 'import time,sys;sys.stdout.write(str(int(time.time()*1000)))' 2>/dev/null || printf '%s000' \"$(date +%s)\"); SID=$(printf '%s' \"$INPUT\" | jq -r '.sessionId // empty' 2>/dev/null); DIR=\"${HOME}/.copilot-obs/sessions\"; mkdir -p \"$DIR\"; F=\"${DIR}/${SID:-unknown}.jsonl\"; TOOL=$(printf '%s' \"$INPUT\" | jq -r '.toolName // empty' 2>/dev/null); ARGS=$(printf '%s' \"$INPUT\" | jq -r '.toolArgs // empty' 2>/dev/null); if command -v jq >/dev/null 2>&1; then printf '%s\\n' \"$INPUT\" | jq -c --arg event 'preToolUse' --argjson ts \"$TS\" '{event:$event,timestamp_ms:$ts,raw:.}' >> \"$F\"; fi; if [ \"$TOOL\" = \"bash\" ] || [ \"$TOOL\" = \"execute\" ] || [ \"$TOOL\" = \"shell\" ]; then CMD=$(printf '%s' \"$ARGS\" | jq -r '.command // empty' 2>/dev/null); if printf '%s' \"$CMD\" | grep -qEi 'rm -rf /|sudo rm|format |DROP TABLE|DROP DATABASE'; then printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Dangerous command blocked by security hook\"}'; exit 0; fi; fi; if [ \"$TOOL\" = \"edit\" ] || [ \"$TOOL\" = \"create\" ] || [ \"$TOOL\" = \"write\" ]; then FP=$(printf '%s' \"$ARGS\" | jq -r '.path // .filePath // empty' 2>/dev/null); if printf '%s' \"$FP\" | grep -qEi '\\.env$|\\.env\\.|secrets|credentials|\\.pem$|\\.key$'; then printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Cannot modify sensitive files\"}'; exit 0; fi; fi",
+        "powershell": "$r='{}'; try{$r=[Console]::In.ReadToEnd()}catch{}; if(!$r){$r='{}'}; $ts=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); $p=$(try{$r|ConvertFrom-Json}catch{@{}}); $sid=if($p.sessionId){$p.sessionId}else{'unknown'}; $d=Join-Path $env:USERPROFILE '.copilot-obs\\sessions'; if(!(Test-Path $d)){$null=New-Item $d -ItemType Directory -Force}; @{event='preToolUse';timestamp_ms=$ts;raw=$p}|ConvertTo-Json -Compress -Depth 10|Add-Content (Join-Path $d \"$sid.jsonl\"); $tool=$p.toolName; $args_str=$p.toolArgs; if($tool -in @('bash','execute','shell','powershell')){$ta=$(try{$args_str|ConvertFrom-Json}catch{@{}}); if($ta.command -match 'rm -rf /|Remove-Item.*-Recurse.*C:\\\\|Format-Volume|DROP TABLE|DROP DATABASE'){@{permissionDecision='deny';permissionDecisionReason='Dangerous command blocked by security hook'}|ConvertTo-Json -Compress; exit 0}}; if($tool -in @('edit','create','write')){$ta=$(try{$args_str|ConvertFrom-Json}catch{@{}}); $fp=if($ta.path){$ta.path}elseif($ta.filePath){$ta.filePath}else{''}; if($fp -match '\\.env$|\\.env\\.|secrets|credentials|\\.pem$|\\.key$'){@{permissionDecision='deny';permissionDecisionReason='Cannot modify sensitive files'}|ConvertTo-Json -Compress; exit 0}}",
+        "timeoutSec": 5,
+        "comment": "Log tool use + block dangerous commands and sensitive file edits"
+      }
+    ]
+  }
+}

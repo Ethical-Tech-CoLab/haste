@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "errorOccurred": [
+      {
+        "type": "command",
+        "bash": "INPUT=$(cat 2>/dev/null || echo '{}'); TS=$(python3 -c 'import time,sys;sys.stdout.write(str(int(time.time()*1000)))' 2>/dev/null || printf '%s000' \"$(date +%s)\"); SID=$(printf '%s' \"$INPUT\" | jq -r '.sessionId // empty' 2>/dev/null); DIR=\"${HOME}/.copilot-obs/sessions\"; mkdir -p \"$DIR\"; F=\"${DIR}/${SID:-unknown}.jsonl\"; if command -v jq >/dev/null 2>&1; then printf '%s\\n' \"$INPUT\" | jq -c --arg event 'errorOccurred' --argjson ts \"$TS\" '{event:$event,timestamp_ms:$ts,raw:.}' >> \"$F\"; else printf '{\"event\":\"errorOccurred\",\"timestamp_ms\":%s}\\n' \"$TS\" >> \"$F\"; fi",
+        "powershell": "$r='{}'; try{$r=[Console]::In.ReadToEnd()}catch{}; if(!$r){$r='{}'}; $ts=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); $p=$(try{$r|ConvertFrom-Json}catch{@{}}); $sid=if($p.sessionId){$p.sessionId}else{'unknown'}; $d=Join-Path $env:USERPROFILE '.copilot-obs\\sessions'; if(!(Test-Path $d)){$null=New-Item $d -ItemType Directory -Force}; @{event='errorOccurred';timestamp_ms=$ts;raw=$p}|ConvertTo-Json -Compress -Depth 10|Add-Content (Join-Path $d \"$sid.jsonl\")",
+        "timeoutSec": 3,
+        "comment": "Log errors for observability and debugging"
+      }
+    ]
+  }
+}
