@@ -263,7 +263,7 @@ class ImageryUtils:
         """
         Args:
                 tif_file (str): Path to the TIFF file.
-                source_type (str, optional): Type of the imagery source. Supported values are "planet_scope", "planet_skysat", and "maxar". Defaults to None.
+                source_type (str, optional): Type of the imagery source. Supported values are "planet_scope", "planet_skysat", "maxar", "mercy_corps", "sentinel_2", and "airbus". Defaults to None.
 
         Returns:
             list: A list of integers representing the band indexes for Red, Green, and Blue channels.
@@ -406,6 +406,15 @@ class ImageryUtils:
                 elif num_bands == 3:
                     mapping = map_bands(["B4", "B3", "B2"])
                     return [mapping["B4"], mapping["B3"], mapping["B2"]]
+
+            elif source_type == "airbus":
+                if num_bands == 4:
+                    # Airbus 4-band order: Blue, Green, Red, NIR (same as Maxar/PlanetScope)
+                    mapping = map_bands(["blue", "green", "red", "nir"])
+                    return [mapping["red"], mapping["green"], mapping["blue"]]
+                elif num_bands == 3:
+                    mapping = map_bands(["red", "green", "blue"])
+                    return [mapping["red"], mapping["green"], mapping["blue"]]
 
             # Fallback using GDAL color interpretation.
             color_interpretation = [
@@ -620,6 +629,9 @@ class ImageryUtils:
                 for i in range(1, 4):
                     if source_type == "planet_skysat":
                         scale_params.append([0, 600, 0, 255])
+                        continue
+                    if source_type == "airbus":
+                        scale_params.append([0, 5000, 0, 255])
                         continue
                     # All other source types that need scaling
                     band = dataset.GetRasterBand(i)
