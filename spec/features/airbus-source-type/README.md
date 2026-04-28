@@ -1,6 +1,6 @@
 # Feature: Add Airbus as Imagery Source Type
 
-**Status:** draft
+**Status:** implemented
 **Author:** Copilot
 **Date:** 2026-04-27
 **Priority:** P1
@@ -41,13 +41,13 @@ None — this is a self-contained imagery provider addition following the establ
 
 | Document | Purpose | Status |
 |---|---|---|
-| [plan.md](plan.md) | Execution plan, milestones, phases | draft |
-| [impact-analysis.md](impact-analysis.md) | Risk, dependencies, blast radius | draft |
-| [user-stories.md](user-stories.md) | User stories & acceptance criteria | draft |
-| [design.md](design.md) | Technical design & API contracts | draft |
-| [data-model.md](data-model.md) | Admin settings schema changes | draft |
-| [test-plan.md](test-plan.md) | Test strategy & coverage matrix | draft |
-| [rollout.md](rollout.md) | Rollout strategy, flags, rollback | draft |
+| [plan.md](plan.md) | Execution plan, milestones, phases | implemented |
+| [impact-analysis.md](impact-analysis.md) | Risk, dependencies, blast radius | implemented |
+| [user-stories.md](user-stories.md) | User stories & acceptance criteria | implemented |
+| [design.md](design.md) | Technical design & API contracts | implemented |
+| [data-model.md](data-model.md) | Admin settings schema changes | implemented |
+| [test-plan.md](test-plan.md) | Test strategy & coverage matrix | implemented |
+| [rollout.md](rollout.md) | Rollout strategy, flags, rollback | implemented |
 
 ## Decision Log
 

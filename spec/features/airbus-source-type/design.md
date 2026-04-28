@@ -38,7 +38,7 @@ None — all changes are additions to existing components.
 
 | Component | Path | Change Description |
 |---|---|---|
-| Imagery Utils | `hastelib/src/hastegeo/core/utils/imagery.py` | Add `"airbus"` case to 4 static methods |
+| Imagery Utils | `hastelib/src/hastegeo/core/utils/imagery.py` | Add `"airbus"` case to `get_rgb_band_indexes()` and `get_scale_imagery_params()` |
 | Prepare Imagery Workflow | `hastelib/src/hastegeo/workflows/prepare_imagery.py` | Add `"airbus"` to `_determine_scale_rgb_params()` |
 | UI Source Type Options | `ui/src/Components/CreateEditImageLayerHelper.js` | Add Airbus entry to `sourceTypeOptions` array |
 | Admin Settings Config | `setup/config_admin_settings.json` | Add Airbus source type entry |
@@ -160,10 +160,10 @@ if source_type in ["planet_scope", "planet_skysat", "mercy_corps", "airbus"]:
    - `_determine_scale_rgb_params("airbus")` → `True`
    - `ImageryUtils.convert_to_rgb_cog(...)` with `source_type="airbus"` and `scale_rgb_params=True`
    - Inside `convert_to_rgb_cog`:
-     - `get_rgb_band_indexes()` → `[1, 2, 3]` (R, G, B from 4-band)
+     - `get_rgb_band_indexes()` → `[3, 2, 1]` (reorders B,G,R,NIR to R,G,B output)
      - `get_scale_imagery_params()` → `[[0, 5000, 0, 255], [0, 5000, 0, 255], [0, 5000, 0, 255]]`
-   - `get_normalization_means()` → `[0, 0, 0, 65535]`
-   - `get_normalization_std_devs()` → `[5000, 5000, 5000, 1]`
+   - `get_normalization_means()` → `[0, 0, 0, 0]` (computed-from-file: all zeros per band)
+   - `get_normalization_std_devs()` → 98th percentile per band (computed-from-file)
 7. The RGB COG and normalization stats are uploaded to Blob Storage
 
 ### Edge Cases
@@ -180,7 +180,7 @@ if source_type in ["planet_scope", "planet_skysat", "mercy_corps", "airbus"]:
 No new error conditions are introduced. All new code paths follow existing patterns:
 - `get_rgb_band_indexes()` returns specific bands or falls through to GDAL fallback
 - `get_scale_imagery_params()` returns hardcoded params (no GDAL read needed for Airbus)
-- `get_normalization_means/stds()` return static values (no GDAL read needed for Airbus)
+- `get_normalization_means/stds()` use existing computed-from-file behavior (no Airbus-specific code)
 
 ## Configuration
 

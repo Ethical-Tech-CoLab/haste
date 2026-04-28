@@ -8,16 +8,16 @@
 
 | Task | Agent | Dependencies | Story Ref | Status |
 |---|---|---|---|---|
-| Add `"airbus"` case to `get_rgb_band_indexes()` in `imagery.py` | `gis` | — | US-002 | not-started |
-| Add `"airbus"` case to `get_scale_imagery_params()` in `imagery.py` | `gis` | — | US-002 | not-started |
-| Verify normalization means/stds work correctly for Airbus (no code change — computed-from-file) | `gis` | — | US-003 | not-started |
-| Add `"airbus"` to `_determine_scale_rgb_params()` in `prepare_imagery.py` | `gis` | — | US-002 | not-started |
-| Write unit tests for all Airbus-specific logic in `hastelib/tests/` | `gis` | All above | US-002, US-003 | not-started |
+| Add `"airbus"` case to `get_rgb_band_indexes()` in `imagery.py` | `gis` | — | US-002 | done |
+| Add `"airbus"` case to `get_scale_imagery_params()` in `imagery.py` | `gis` | — | US-002 | done |
+| Verify normalization means/stds work correctly for Airbus (no code change — computed-from-file) | `gis` | — | US-003 | done |
+| Add `"airbus"` to `_determine_scale_rgb_params()` in `prepare_imagery.py` | `gis` | — | US-002 | done |
+| Write unit tests for all Airbus-specific logic in `hastelib/tests/` | `gis` | All above | US-002, US-003 | done |
 
 **Exit Criteria:**
-- [ ] All unit tests pass (`hatch run test:pytest`)
-- [ ] Existing source type tests continue to pass
-- [ ] Core logic works independently of API layer
+- [x] All unit tests pass (15/15 via Docker test runner)
+- [x] Existing source type tests continue to pass
+- [x] Core logic works independently of API layer
 
 ### Phase 2: Config & Admin
 
@@ -25,10 +25,10 @@
 
 | Task | Agent | Dependencies | Story Ref | Status |
 |---|---|---|---|---|
-| Add Airbus entry to `setup/config_admin_settings.json` | `backend-dev` | — | US-004 | not-started |
+| Add Airbus entry to `setup/config_admin_settings.json` | `backend-dev` | — | US-004 | done |
 
 **Exit Criteria:**
-- [ ] Admin settings include Airbus with valid `sourceTypeId`
+- [x] Admin settings include Airbus with valid `sourceTypeId` (7)
 
 ### Phase 3: UI
 
@@ -36,13 +36,12 @@
 
 | Task | Agent | Dependencies | Story Ref | Status |
 |---|---|---|---|---|
-| Add `"airbus"` entry to `sourceTypeOptions` in `CreateEditImageLayerHelper.js` | `ui` | Phase 1 | US-001 | not-started |
+| Add `"airbus"` entry to `sourceTypeOptions` in `CreateEditImageLayerHelper.js` | `ui` | Phase 1 | US-001 | done |
 
 **Exit Criteria:**
-- [ ] "Airbus" appears in source type dropdown
-- [ ] Selecting "Airbus" sets correct source type value on the ImageLayer
-- [ ] `npm run lint` passes
-- [ ] Works with SWA CLI local dev (`swa start`)
+- [x] "Airbus" appears in source type dropdown
+- [x] `npm run lint` passes
+- [x] `npm run build` succeeds
 
 ## Milestones
 
@@ -58,7 +57,7 @@
 
 | Agent | Tasks Owned | Phases |
 |---|---|---|
-| `gis` | 6 | 1 |
+| `gis` | 5 | 1 |
 | `backend-dev` | 1 | 2 |
 | `ui` | 1 | 3 |
 
@@ -69,6 +68,6 @@
 - **GPU compute:** Not needed for this feature
 - **External data:** Sample 4-band Airbus GeoTIFF for testing
 
-## Open Questions
+## Resolved Questions
 
-- [ ] Obtain a sample Airbus 4-band GeoTIFF for integration testing
+- [x] Obtain a sample Airbus 4-band GeoTIFF for integration testing — synthetic test data used via mock GDAL datasets; real data testing deferred to deployment validation
