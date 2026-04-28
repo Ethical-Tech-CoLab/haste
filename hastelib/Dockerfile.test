@@ -1,0 +1,37 @@
+# Lightweight test runner for hastelib.
+# Uses the same GDAL wheel the project hosts for Linux deployments.
+#
+# Build (from repo root):
+#   docker build -f hastelib/Dockerfile.test -t haste-test .
+#
+# Run all tests:
+#   docker run --rm haste-test
+#
+# Run specific tests:
+#   docker run --rm haste-test tests/core/utils/test_imagery_airbus.py -v
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Minimal runtime libs for opencv and rasterio
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install the pre-built GDAL wheel from project blob storage first
+RUN pip install --no-cache-dir \
+    "GDAL @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/GDAL-3.9.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+
+# Copy project metadata and install with test extras
+COPY hastelib/pyproject.toml hastelib/haste_build.py hastelib/README.md /app/
+COPY hastelib/src /app/src
+
+ENV HASTE_SKIP_VERSION_BUMP=1
+RUN pip install --no-cache-dir -e ".[test]"
+
+# Copy tests last (changes most often → best cache layer)
+COPY hastelib/tests /app/tests
+
+ENTRYPOINT ["pytest"]
+CMD ["tests/", "-v"]

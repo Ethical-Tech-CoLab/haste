@@ -52,6 +52,17 @@ dependencies = [
   "typing-extensions"
 ]
 
+[project.optional-dependencies]
+test = [
+  "coverage-enable-subprocess==1.0",
+  "coverage[toml]~=7.4",
+  "pytest~=8.1",
+  "pytest-mock~=3.12",
+  "pytest-randomly~=3.15",
+  "pytest-rerunfailures~=14.0",
+  "pytest-xdist[psutil]~=3.5",
+]
+
 [project.urls]
 Documentation = "https://microsoft.github.io/haste"
 Issues = "https://github.com/microsoft/haste/issues"
@@ -71,19 +82,14 @@ extra-dependencies = [
 [tool.hatch.envs.types.scripts]
 check = "mypy --install-types --non-interactive {args:src/hastegeo tests}"
 
-# This is the conda environment used for testing
+# Test environment — works with both hatch and uv:
+#   hatch:  hatch run test:pytest
+#   uv:    uv run --extra test pytest
 [tool.hatch.envs.test]
-environment-file = "dev_env.yml"
-type = "conda"
-dependencies = [
-  "coverage-enable-subprocess==1.0",
-  "coverage[toml]~=7.4",
-  "pytest~=8.1",
-  "pytest-mock~=3.12",
-  "pytest-randomly~=3.15",
-  "pytest-rerunfailures~=14.0",
-  "pytest-xdist[psutil]~=3.5",
-]
+features = ["test"]
+
+[tool.hatch.envs.test.scripts]
+pytest = "pytest {args}"
 
 [tool.hatch.envs.test.env-vars]
 DATA_PATH = "haste_test_data"

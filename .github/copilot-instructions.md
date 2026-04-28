@@ -29,7 +29,9 @@ React UI (Vite + FluentUI + Azure Maps + MSAL)
 ## Build & Test
 
 - **Core library build**: `cd hastelib && hatch build -t wheel`
-- **Core library tests**: `cd hastelib && hatch run test:pytest`
+- **Core library tests (Docker, preferred)**: `docker build -f hastelib/Dockerfile.test -t haste-test .` then `docker run --rm haste-test`
+- **Core library tests (specific file)**: `docker run --rm haste-test tests/path/to/test_file.py -v`
+- **Core library tests (hatch, alternative)**: `cd hastelib && hatch run test:pytest`
 - **UI build**: `cd ui && npm run build`
 - **UI lint**: `cd ui && npm run lint`
 - **API local run**: `cd api/hastefuncapi && func host start`
