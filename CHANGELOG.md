@@ -7,6 +7,21 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ---
 
+## [v1.4.2] — Security and pipeline hardening
+
+### Added
+- **CodeQL scanning** — Static analysis workflow covering Python, JavaScript/TypeScript, and GitHub Actions, running on PRs and a weekly schedule
+
+### Changed
+- **Docker build CI** — Training and imagery-prep images now only rebuild when relevant paths change (`docker/training/`, `docker/imageryprep/`, `hastelib/`), reducing CI time for UI-only changes
+- **GitHub Actions permissions** — Explicit least-privilege `permissions` blocks added to all workflows
+
+### Fixed
+- Minor UI API utility cleanup
+- **Dependency security updates** — Resolved 12 of 19 Dependabot alerts across root and UI packages: upgraded `vite` (5→8), `postcss`, `tough-cookie`, `xml2js`, `uuid` (UI), `brace-expansion`, `picomatch`, `cookie`, `tmp`, and `@azure/identity` (UI). Remaining 7 alerts are blocked by `azurite → @azure/ms-rest-js` (deprecated Azure SDK) and require an upstream azurite fix.
+
+---
+
 ## [v1.4.1] — Initial public release
 
 ### Added
@@ -21,5 +36,3 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 - **Local development support** — `docker-compose` stack, Azurite storage emulator, conda environment, and VSCode launch/task configuration
 
 ---
-
-*Older internal development history is available in the repository's git log.*
