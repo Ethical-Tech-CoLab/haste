@@ -1340,13 +1340,41 @@ async def GetUsers(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="PutUser", auth_level=AUTH_LEVEL, methods=["PUT"])
 async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
     logger.info("PutUser HTTP trigger function processed a request.")
-    auth_error = _require_roles(req, {"administrators"})
-    if auth_error:
-        return auth_error
     try:
         req_body = req.get_json()
         input = User(**req_body.get("user", {}))
         action = req_body.get("action")
+
+        # Authorization: admins can perform any action. Ordinary users may
+        # only update their own profile/settings (action == "update", same
+        # identity, no role change). Role-change attempts by non-admins
+        # are rejected below in the update branch via `roles_changed`.
+        is_admin = DEVELOPMENT_MODE
+        if not DEVELOPMENT_MODE:
+            principal = _decode_client_principal(req)
+            caller_email = (
+                (principal or {}).get("userDetails")
+                or (principal or {}).get("userId")
+                or ""
+            ).lower()
+            if not caller_email:
+                return func.HttpResponse(
+                    "Forbidden. Missing caller identity.", status_code=403
+                )
+            raw_roles = (principal or {}).get("userRoles")
+            caller_roles = (
+                {r.lower().strip() for r in raw_roles if isinstance(r, str)}
+                if isinstance(raw_roles, list)
+                else set()
+            )
+            is_admin = "administrators" in caller_roles
+            target_email = (input.email or input.userId or "").lower()
+            is_self = bool(target_email) and caller_email == target_email
+            if not is_admin and not (action == "update" and is_self):
+                return func.HttpResponse(
+                    "Forbidden. Administrator role required.",
+                    status_code=403,
+                )
         if input.userId is None:
             input.userId = MetadataUtils.generate_id()
         try:
@@ -1438,6 +1466,11 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
                 existing_user.identityProvider = input.identityProvider
                 # Check if roles changed and send new invitation if needed
                 if roles_changed(input.userRoles, existing_user.userRoles):
+                    if not is_admin:
+                        return func.HttpResponse(
+                            "Forbidden. Administrator role required.",
+                            status_code=403,
+                        )
                     logger.info(
                         f"Roles changed for user: {input.email}, re-sending invitation."
                     )
