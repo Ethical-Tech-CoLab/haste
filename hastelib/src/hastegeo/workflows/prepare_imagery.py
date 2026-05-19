@@ -59,6 +59,9 @@ POST_EVENT_MOSAIC_PREFIX = (
 POST_EVENT_PROCESSED_COG_PREFIX = (
     hasteconfig.get_artifact_types().POST_EVENT_PROCESSED_COG.value
 )
+BUILDING_FOOTPRINTS_PREFIX = (
+    hasteconfig.get_artifact_types().BUILDING_FOOTPRINTS.value
+)
 
 
 class ImageryWorkflow:
@@ -107,6 +110,14 @@ class ImageryWorkflow:
 
         self.normalization_means = []
         self.normalization_stds = []
+        self.building_footprints_path = ""
+        # Human-readable error captured when the building-footprint download
+        # fails. The download is intentionally a soft-failure inside this
+        # container (so the imagery COGs that have already been produced still
+        # get uploaded with the manifest), but the message is propagated
+        # through the manifest so ImageryPostProcessor can mark the image
+        # layer FAILED and surface the cause in the UI's statusMessage.
+        self.building_footprints_error = ""
 
     def generate_prefix(self, prefix: Template):
         """Generate a prefix for the output files based on the project ID and image layer ID."""
@@ -254,6 +265,146 @@ class ImageryWorkflow:
             self.mosaic_post_event_tif_filepath,
             source_type=self.source_type_post_event,
         )
+
+    def download_building_footprints(self):
+        """Download Overture Maps building footprints for this layer's AOI.
+
+        Derives the AOI from the post-event mosaic COG produced by
+        :meth:`process_post_event` and writes a per-layer GeoPackage into
+        ``self.dst_directory``.
+
+        The download itself is delegated to a subprocess
+        (``python -m hastegeo.core.utils.footprints``) so a crash in pyarrow's
+        native code (e.g. when running under QEMU x86_64 emulation on arm64
+        hosts), an Overture query timeout, or any other Overture-side fault
+        is contained to a child process and does not take down the parent
+        imageryprep workflow.
+
+        Failure handling is deliberately split between two layers:
+
+        * **Inside this container**, every failure mode is caught and
+          recorded on ``self.building_footprints_error`` rather than
+          re-raised. This lets the workflow continue past this step so the
+          imagery COGs that have already been produced are still written to
+          the manifest and uploaded.
+        * **Outside this container**, ``ImageryPostProcessor`` reads the
+          captured error from the manifest and marks the image layer
+          FAILED with the same message, so the UI surfaces a clear cause
+          instead of silently leaving the layer in a state where every
+          inference run will fail.
+
+        Sets ``self.building_footprints_path`` on success, or
+        ``self.building_footprints_error`` (UI-displayable) on any failure.
+        """
+        if not self.mosaic_post_event_tif_filepath or not os.path.exists(
+            self.mosaic_post_event_tif_filepath
+        ):
+            msg = (
+                "Cannot download building footprints: post-event mosaic "
+                "is not available."
+            )
+            logger.error(msg)
+            self.building_footprints_path = ""
+            self.building_footprints_error = msg
+            return
+
+        prefix = self.generate_prefix(BUILDING_FOOTPRINTS_PREFIX)
+        output_path = os.path.join(self.dst_directory, f"{prefix}.gpkg")
+
+        try:
+            from hastegeo.core.utils.aoi import aoi_bbox_from_cog
+
+            bbox = aoi_bbox_from_cog(self.mosaic_post_event_tif_filepath)
+        except Exception as exc:
+            logger.error(
+                "Failed extracting AOI for image layer %s",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.building_footprints_path = ""
+            self.building_footprints_error = (
+                "Failed to extract area-of-interest from the post-event "
+                f"mosaic before downloading building footprints: {exc}"
+            )
+            return
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "hastegeo.core.utils.footprints",
+            # Use --bbox=VALUE so argparse doesn't treat a leading '-' in the
+            # first coordinate (e.g. -156.7,...) as another option flag.
+            f"--bbox={bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
+            "--output-path",
+            output_path,
+            "--overwrite",
+        ]
+        timeout_seconds = int(
+            os.getenv("HASTE_FOOTPRINTS_TIMEOUT_SECONDS", "1800")
+        )
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(
+                "Building-footprint subprocess timed out after %ss for "
+                "image layer %s",
+                timeout_seconds,
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.building_footprints_path = ""
+            self.building_footprints_error = (
+                "Building-footprint download timed out after "
+                f"{timeout_seconds} seconds."
+            )
+            return
+        except Exception as exc:
+            logger.error(
+                "Building-footprint subprocess raised for image layer %s",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.building_footprints_path = ""
+            self.building_footprints_error = (
+                "Building-footprint download could not be started: " f"{exc}"
+            )
+            return
+
+        if result.returncode != 0 or not os.path.exists(output_path):
+            stderr_tail = (result.stderr or "").strip().splitlines()
+            stderr_msg = stderr_tail[-1] if stderr_tail else ""
+            logger.error(
+                "Building-footprint subprocess failed for image layer "
+                "%s (returncode=%s). stderr:\n%s",
+                self.image_layer_id,
+                result.returncode,
+                (result.stderr or "")[-2000:],
+            )
+            self.building_footprints_path = ""
+            self.building_footprints_error = (
+                "Building-footprint download failed "
+                f"(exit code {result.returncode})"
+                + (f": {stderr_msg}" if stderr_msg else ".")
+            )
+            return
+
+        count = (result.stdout or "").strip().splitlines()
+        count_msg = count[-1] if count else "?"
+        logger.info(
+            "Downloaded %s building footprints for image layer %s",
+            count_msg,
+            self.image_layer_id,
+        )
+        self.building_footprints_path = output_path
+        self.building_footprints_error = ""
 
 
 def _download_imagery(urls, dst_directory):
@@ -472,6 +623,21 @@ def main():
         )
         config["normalization_means"] = imagery_workflow.normalization_means
         config["normalization_stds"] = imagery_workflow.normalization_stds
+
+        log_progress("Downloading building footprints")
+        imagery_workflow.download_building_footprints()
+        config["building_footprints_filename"] = (
+            os.path.basename(imagery_workflow.building_footprints_path)
+            if imagery_workflow.building_footprints_path
+            else ""
+        )
+        # Propagate any captured failure message so ImageryPostProcessor
+        # can mark the layer FAILED with a UI-displayable cause without
+        # this subprocess having to raise (which would lose the imagery
+        # COGs we have already produced above).
+        config[
+            "building_footprints_error"
+        ] = imagery_workflow.building_footprints_error
 
         log_progress("Finalizing outputs")
         with open(os.path.join(output_dir, "imagery_manifest.json"), "w") as f:
