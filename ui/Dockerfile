@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/azurelinux/base/nodejs:20.14
+FROM mcr.microsoft.com/azurelinux/base/nodejs:24
 
 # Install global CLI as root first
 RUN npm install -g @azure/static-web-apps-cli
