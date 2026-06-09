@@ -244,5 +244,239 @@ class TestDownloadBuildingFootprintsStep(unittest.TestCase):
             self.assertIn("post-event mosaic", wf.valid_area_mask_error)
 
 
+class TestProcessUserBuildingFootprintsStep(unittest.TestCase):
+    """Unit tests for ImageryWorkflow.process_user_building_footprints().
+
+    Mirrors TestDownloadBuildingFootprintsStep but for the user-supplied
+    GPKG path. Covers:
+      - happy path: validates the URL, derives AOI, calls the clip helper,
+        and writes the BUILDING_FOOTPRINTS-templated output;
+      - URL re-validation inside the workflow (defense-in-depth);
+      - download failure / clip failure / no-mosaic / AOI extract failure
+        all soft-failed (captured on building_footprints_error);
+      - cross-host redirect refused;
+      - max-bytes cap enforced.
+    """
+
+    _GOOD_URL = "https://example.blob.core.windows.net/c/footprints.gpkg?sv=...&sig=..."
+
+    def _make_workflow(self, dst_directory, *, with_mosaic=True):
+        wf = ImageryWorkflow(
+            project_id="proj-1",
+            image_layer_id="layer-9",
+            dst_directory=dst_directory,
+            user_building_footprints_url=self._GOOD_URL,
+        )
+        if with_mosaic:
+            mosaic = os.path.join(dst_directory, "fake_post_event_mosaic.tif")
+            with open(mosaic, "wb") as f:
+                f.write(b"")
+            wf.mosaic_post_event_tif_filepath = mosaic
+        return wf
+
+    def _expected_output(self, tmp):
+        return os.path.join(tmp, "building_footprints_proj-1_layer-9.gpkg")
+
+    @patch(
+        "hastegeo.workflows.prepare_imagery.ImageryWorkflow."
+        "_download_user_footprints_to"
+    )
+    @patch("hastegeo.core.utils.aoi.extract_aoi_polygon")
+    @patch("hastegeo.core.utils.footprints.clip_and_normalize_user_footprints")
+    @patch("hastegeo.core.utils.url_allowlist.validate_footprint_url")
+    def test_happy_path_writes_clipped_gpkg(
+        self,
+        mock_validate,
+        mock_clip,
+        mock_aoi,
+        mock_download,
+    ):
+        mock_aoi.return_value = MagicMock()  # shapely polygon stand-in
+        mock_clip.return_value = 17  # feature count
+
+        def fake_download(url, output_path, **_):
+            with open(output_path, "wb") as f:
+                f.write(b"GPKG-stub")
+
+        mock_download.side_effect = fake_download
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            wf.process_user_building_footprints()
+
+            self.assertEqual(
+                wf.building_footprints_path,
+                self._expected_output(tmp),
+            )
+            self.assertEqual(wf.building_footprints_error, "")
+            mock_validate.assert_called_once_with(self._GOOD_URL)
+            mock_aoi.assert_called_once_with(wf.mosaic_post_event_tif_filepath)
+            mock_clip.assert_called_once()
+            kwargs = mock_clip.call_args.kwargs
+            self.assertEqual(kwargs["output_path"], self._expected_output(tmp))
+            self.assertTrue(kwargs["overwrite"])
+
+    @patch("hastegeo.core.utils.aoi.extract_aoi_polygon")
+    @patch("hastegeo.core.utils.url_allowlist.validate_footprint_url")
+    def test_invalid_url_records_error_without_download(
+        self, mock_validate, mock_aoi
+    ):
+        mock_validate.side_effect = ValueError("not allowlisted")
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            wf.process_user_building_footprints()
+            self.assertEqual(wf.building_footprints_path, "")
+            self.assertIn("not allowed", wf.building_footprints_error)
+            self.assertIn("not allowlisted", wf.building_footprints_error)
+            # AOI extraction must not run if validation already failed.
+            mock_aoi.assert_not_called()
+
+    def test_skips_when_no_post_event_mosaic_records_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp, with_mosaic=False)
+            wf.process_user_building_footprints()
+            self.assertEqual(wf.building_footprints_path, "")
+            self.assertIn("post-event mosaic", wf.building_footprints_error)
+
+    @patch("hastegeo.core.utils.aoi.extract_aoi_polygon")
+    @patch("hastegeo.core.utils.url_allowlist.validate_footprint_url")
+    def test_aoi_failure_records_error(self, mock_validate, mock_aoi):
+        mock_aoi.side_effect = RuntimeError("rasterio could not open")
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            wf.process_user_building_footprints()
+            self.assertEqual(wf.building_footprints_path, "")
+            self.assertIn("area-of-interest", wf.building_footprints_error)
+
+    @patch(
+        "hastegeo.workflows.prepare_imagery.ImageryWorkflow."
+        "_download_user_footprints_to"
+    )
+    @patch("hastegeo.core.utils.aoi.extract_aoi_polygon")
+    @patch("hastegeo.core.utils.url_allowlist.validate_footprint_url")
+    def test_download_failure_records_error(
+        self, mock_validate, mock_aoi, mock_download
+    ):
+        mock_aoi.return_value = MagicMock()
+        mock_download.side_effect = RuntimeError("HTTP 500")
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            wf.process_user_building_footprints()
+            self.assertEqual(wf.building_footprints_path, "")
+            self.assertIn("download", wf.building_footprints_error.lower())
+            self.assertIn("HTTP 500", wf.building_footprints_error)
+
+    @patch(
+        "hastegeo.workflows.prepare_imagery.ImageryWorkflow."
+        "_download_user_footprints_to"
+    )
+    @patch("hastegeo.core.utils.aoi.extract_aoi_polygon")
+    @patch("hastegeo.core.utils.footprints.clip_and_normalize_user_footprints")
+    @patch("hastegeo.core.utils.url_allowlist.validate_footprint_url")
+    def test_clip_failure_records_error(
+        self,
+        mock_validate,
+        mock_clip,
+        mock_aoi,
+        mock_download,
+    ):
+        mock_aoi.return_value = MagicMock()
+
+        def fake_download(url, output_path, **_):
+            with open(output_path, "wb") as f:
+                f.write(b"GPKG-stub")
+
+        mock_download.side_effect = fake_download
+        mock_clip.side_effect = ValueError("No features intersect the AOI")
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            wf.process_user_building_footprints()
+            self.assertEqual(wf.building_footprints_path, "")
+            self.assertIn("process", wf.building_footprints_error.lower())
+            self.assertIn(
+                "No features intersect the AOI",
+                wf.building_footprints_error,
+            )
+
+    def test_download_refuses_cross_host_redirect(self):
+        from unittest.mock import MagicMock as MM
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            output_path = os.path.join(tmp, "stage.gpkg")
+
+            redirect_resp = MM()
+            redirect_resp.status_code = 302
+            redirect_resp.headers = {"Location": "https://evil.example/x"}
+            redirect_resp.__enter__ = lambda s: s
+            redirect_resp.__exit__ = lambda *a: False
+
+            with patch("requests.get", return_value=redirect_resp) as mock_get:
+                with self.assertRaises(RuntimeError) as cm:
+                    wf._download_user_footprints_to(
+                        self._GOOD_URL,
+                        output_path,
+                        max_bytes=10_000,
+                        timeout_seconds=30,
+                    )
+                self.assertIn("Redirects", str(cm.exception))
+                kwargs = mock_get.call_args.kwargs
+                self.assertFalse(kwargs.get("allow_redirects", True))
+
+    def test_download_enforces_max_bytes_streamed(self):
+        from unittest.mock import MagicMock as MM
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            output_path = os.path.join(tmp, "stage.gpkg")
+
+            resp = MM()
+            resp.status_code = 200
+            # No content-length header — must catch on streaming.
+            resp.headers = {}
+            resp.raise_for_status = MM(return_value=None)
+            # Stream chunks larger than the cap so we trigger the abort.
+            resp.iter_content = MM(
+                return_value=iter([b"\x00" * 600, b"\x00" * 600])
+            )
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = lambda *a: False
+
+            with patch("requests.get", return_value=resp):
+                with self.assertRaises(RuntimeError) as cm:
+                    wf._download_user_footprints_to(
+                        self._GOOD_URL,
+                        output_path,
+                        max_bytes=1000,
+                        timeout_seconds=30,
+                    )
+                self.assertIn("max size", str(cm.exception))
+
+    def test_download_rejects_content_length_too_large(self):
+        from unittest.mock import MagicMock as MM
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            output_path = os.path.join(tmp, "stage.gpkg")
+
+            resp = MM()
+            resp.status_code = 200
+            resp.headers = {"content-length": str(10_000)}
+            resp.raise_for_status = MM(return_value=None)
+            resp.iter_content = MM(return_value=iter([]))
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = lambda *a: False
+
+            with patch("requests.get", return_value=resp):
+                with self.assertRaises(RuntimeError) as cm:
+                    wf._download_user_footprints_to(
+                        self._GOOD_URL,
+                        output_path,
+                        max_bytes=5_000,
+                        timeout_seconds=30,
+                    )
+                self.assertIn("max size", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

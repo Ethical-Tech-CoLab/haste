@@ -649,10 +649,19 @@ class ImageLayer(BaseModel):
         normalizationStds: Standard deviation values for each spectral band
         labelProject: Associated labeling project providing ground truth data
         labelsUrl: URL to labels file for the imagery layer
-        buildingFootprintsUrl: URL to the cached Overture Maps building
-            footprint GeoPackage scoped to this layer's AOI. Populated
-            by the imageryprep workflow; consumed by inference instead of
-            re-downloading on every model run.
+        buildingFootprintsUrl: URL to the cached building-footprint
+            GeoPackage scoped to this layer's AOI. Populated by the
+            imageryprep workflow from either Overture Maps (default) or
+            from the user-supplied ``userBuildingFootprintsUrl`` (when
+            set). Consumed by inference instead of re-downloading on
+            every model run.
+        userBuildingFootprintsUrl: Optional user-supplied URL pointing to
+            a GeoPackage of building footprints. When set, the imageryprep
+            workflow skips the Overture download and instead downloads
+            this file, reprojects it to EPSG:4326, clips it to the layer's
+            AOI, and writes the result to ``buildingFootprintsUrl``. The
+            URL must satisfy ``validate_footprint_url`` (same allowlist
+            as imagery URLs plus the configured local upload host).
         validAreaMaskUrl: URL to a single-feature GeoJSON FeatureCollection
             containing the valid-data polygon (EPSG:4326) derived from the
             post-event mosaic, i.e. the imagery's actual AOI excluding
@@ -719,6 +728,7 @@ class ImageLayer(BaseModel):
     labelProject: Optional[LabelProject] = Field(default=None)
     labelsUrl: Optional[str] = Field(default=None)
     buildingFootprintsUrl: Optional[str] = Field(default=None)
+    userBuildingFootprintsUrl: Optional[str] = Field(default=None)
     validAreaMaskUrl: Optional[str] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("Project", "projectId")
