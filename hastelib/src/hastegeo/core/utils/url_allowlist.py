@@ -6,6 +6,7 @@ Used by both the ImageryDownloader (defense-in-depth at fetch time) and the
 PutLayer API handler (reject bad URLs at submission time, so users get
 immediate feedback instead of failed batch jobs).
 """
+import os
 from urllib.parse import urlparse
 
 # Human-readable description used in user-facing error messages. Keep in
@@ -14,6 +15,18 @@ ALLOWED_HOST_DESCRIPTION = (
     "Azure Blob Storage (*.blob.core.windows.net) "
     "or AWS S3 (*.amazonaws.com)"
 )
+
+# Building-footprint URLs additionally permit the host of the configured
+# local upload endpoint (read from ``BLOB_ACCOUNT_URL``) so the URLs
+# returned by the chunked file uploader work end-to-end in local dev. The
+# helper falls back to allowing the conventional Azurite hosts when the
+# env var is missing (no-op in production where the imagery allowlist
+# already covers ``*.blob.core.windows.net``).
+FOOTPRINT_ALLOWED_HOST_DESCRIPTION = (
+    f"{ALLOWED_HOST_DESCRIPTION} or the configured local upload host"
+)
+
+_AZURITE_DEV_HOSTS = ("azurite", "localhost", "127.0.0.1")
 
 
 def validate_imagery_url(url: str) -> str:
@@ -45,4 +58,87 @@ def validate_imagery_url(url: str) -> str:
 
     raise ValueError(
         f"URL host {host!r} is not on the allowlist of permitted imagery sources"
+    )
+
+
+def _parse_local_upload_endpoint() -> tuple[str, str, int | None] | None:
+    """Parse ``BLOB_ACCOUNT_URL`` into (scheme, hostname, port).
+
+    Returns ``None`` if the env var is unset or unparseable. Used to
+    exact-match local-dev upload URLs (e.g. ``http://azurite:10000/...``)
+    so the chunked uploader output can flow through the footprint URL
+    allowlist without opening a broader hole.
+    """
+    raw = os.environ.get("BLOB_ACCOUNT_URL")
+    if not raw:
+        return None
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return None
+    if not parsed.hostname or parsed.scheme not in ("http", "https"):
+        return None
+    return parsed.scheme, parsed.hostname.lower(), parsed.port
+
+
+def validate_footprint_url(url: str) -> str:
+    """Validate a user-supplied building-footprint URL.
+
+    Permits the same hosts as :func:`validate_imagery_url` PLUS the host
+    of the configured local upload endpoint (so URLs returned by the
+    chunked uploader in dev work end-to-end). Returns a source-type label
+    matching :func:`validate_imagery_url`'s vocabulary, plus the literal
+    ``'localupload'`` for the configured-endpoint case.
+
+    Raises ValueError on rejection — callers must treat this as a hard
+    failure (just like :func:`validate_imagery_url`).
+
+    Security note: when ``BLOB_ACCOUNT_URL`` is unset we deliberately do
+    NOT fall back to allowing ``localhost``/``127.0.0.1``/``azurite``,
+    because the workflow fetches these URLs server-side. A misconfigured
+    production deployment without an explicit endpoint must reject all
+    local hosts to avoid acting as an SSRF gadget against loopback or
+    internal services. Operators who want the loopback fallback must
+    explicitly opt in via ``HASTE_ALLOW_LOCAL_FOOTPRINT_HOSTS=1`` (the
+    docker-compose dev stack sets this), and even then only the exact
+    Azurite hosts are permitted — never arbitrary loopback addresses
+    with arbitrary ports/paths.
+    """
+    try:
+        return validate_imagery_url(url)
+    except ValueError:
+        # Fall through to the local-upload exception below; reraise if
+        # nothing matches so the caller sees a single, consistent error.
+        pass
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: {parsed.scheme!r}")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("URL is missing host component")
+
+    endpoint = _parse_local_upload_endpoint()
+    if endpoint is not None:
+        e_scheme, e_host, e_port = endpoint
+        if (
+            parsed.scheme == e_scheme
+            and host == e_host
+            and (parsed.port or None) == e_port
+        ):
+            return "localupload"
+
+    # Opt-in dev fallback: only allow conventional Azurite hostnames when
+    # the operator has explicitly enabled it. Never enabled by default,
+    # so a misconfigured production stack can't be tricked into SSRF
+    # against loopback/internal services via this branch.
+    if (
+        os.environ.get("HASTE_ALLOW_LOCAL_FOOTPRINT_HOSTS", "").strip()
+        in ("1", "true", "True", "yes")
+        and host in _AZURITE_DEV_HOSTS
+    ):
+        return "localupload"
+
+    raise ValueError(
+        f"URL host {host!r} is not on the allowlist of permitted building-footprint sources"
     )

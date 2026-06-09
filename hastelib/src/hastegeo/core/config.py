@@ -306,6 +306,7 @@ class Config:
             JSON = "json"
             TIF = "tif"
             TIFF = "tif"
+            GPKG = "gpkg"
 
         return DataFormats
 
