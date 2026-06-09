@@ -6,6 +6,19 @@ can be re-derived if it ever stops applying.
 
 ## Docker / local dev stack
 
+### `data-init` must widen perms on the host `data/` bind mount
+`hastefuncapi`/`hastefuncqueues` mount `../data:/app/data` and run as the
+non-root `appuser` (UID 999), but the host `data/` directory is created
+root-owned (mode 755) by docker the first time the compose stack comes
+up. Without intervention, the very first chunked upload fails with
+`PermissionError: '/app/data/<projectId>'` because `appuser` cannot
+`mkdir` under it. The fix lives in the `data-init` service: it bind-mounts
+`../data:/shared/app-data` and runs `chmod -R 777 /shared/app-data`
+alongside the existing chmod of `/shared/azurite`, before `hastefuncapi`
+starts. Re-run `docker compose up -d --force-recreate data-init` after
+checking out a fresh worktree where this directory may have been recreated
+root-only.
+
 ### Restart `api-proxy` after recreating `hastefuncapi`
 `docker/nginx.conf` declares the backend with a bare `upstream
 functions_backend { server hastefuncapi:8080; }` directive, which makes
