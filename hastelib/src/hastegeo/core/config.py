@@ -85,6 +85,8 @@ class ArtifactTypes(Enum):
         POST_EVENT_MOSAIC.template + Template("_visualizer").template
     )
     MODEL_ARTIFACTS_ZIP = Template("artifacts_${modelName}")
+    TRAINING_ARTIFACTS_ZIP = Template("training_artifacts_${modelName}")
+    INFERENCE_ARTIFACTS_ZIP = Template("inference_artifacts_${modelName}")
 
 
 class InviteConfig(NamedTuple):
@@ -279,6 +281,7 @@ class Config:
             PROCESSED_IMAGERY = "processed_imagery_post_event_cog"
             RAW_IMAGERY = "raw_imagery"
             PREVIEW_RAW_IMAGERY = "preview_raw_imagery"
+            VALIDATION = "validation"
 
         return DataTypes
 
