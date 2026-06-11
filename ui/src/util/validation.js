@@ -49,7 +49,7 @@ export function validateAtLeastSomeNumber(key, value, number) {
   return "";
 }
 
-export function validateIsUploading(preEventImageryUrls, postEventImageryUrls) {
+export function validateIsUploading(preEventImageryUrls, postEventImageryUrls, userBuildingFootprintsUrls = []) {
   for (let i = 0; i < preEventImageryUrls.length; i++) {
     if (preEventImageryUrls[i].type === "file") {
       return true;
@@ -58,6 +58,12 @@ export function validateIsUploading(preEventImageryUrls, postEventImageryUrls) {
 
   for (let i = 0; i < postEventImageryUrls.length; i++) {
     if (postEventImageryUrls[i].type === "file") {
+      return true;
+    }
+  }
+
+  for (let i = 0; i < userBuildingFootprintsUrls.length; i++) {
+    if (userBuildingFootprintsUrls[i].type === "file") {
       return true;
     }
   }
@@ -114,6 +120,9 @@ export function validateURL(url) {
 const IMAGERY_URL_ALLOWED_HOST_DESCRIPTION =
   "Azure Blob Storage (*.blob.core.windows.net) or AWS S3 (*.amazonaws.com)";
 
+const FOOTPRINT_URL_ALLOWED_HOST_DESCRIPTION =
+  "Azure Blob Storage (*.blob.core.windows.net), AWS S3 (*.amazonaws.com), or the local upload host (in development)";
+
 export function validateImageryUrlHost(url) {
   let parsed;
   try {
@@ -149,6 +158,45 @@ export function validateImageryUrlHost(url) {
   return [
     false,
     `URL host "${host}" is not on the allowlist. Allowed: ${IMAGERY_URL_ALLOWED_HOST_DESCRIPTION}.`,
+  ];
+}
+
+// Same allowlist as validateImageryUrlHost plus the local upload host
+// (so the URL returned by the chunked uploader works in local dev).
+// Mirrors validate_footprint_url in url_allowlist.py.
+export function validateFootprintUrlHost(url) {
+  // First try the imagery hosts — accept immediately if it matches.
+  const [imageryOk] = validateImageryUrlHost(url);
+  if (imageryOk) {
+    return [true, ""];
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (e) {
+    return [false, "Invalid URL format"];
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return [false, `Unsupported URL scheme: ${parsed.protocol}`];
+  }
+
+  const host = parsed.hostname;
+  if (!host) {
+    return [false, "URL is missing host component"];
+  }
+
+  // Local-dev fallback: allow azurite / localhost / 127.0.0.1 only.
+  // These match the Python-side _AZURITE_DEV_HOSTS allowlist.
+  const devHosts = new Set(["azurite", "localhost", "127.0.0.1"]);
+  if (devHosts.has(host)) {
+    return [true, ""];
+  }
+
+  return [
+    false,
+    `URL host "${host}" is not on the allowlist. Allowed: ${FOOTPRINT_URL_ALLOWED_HOST_DESCRIPTION}.`,
   ];
 }
 

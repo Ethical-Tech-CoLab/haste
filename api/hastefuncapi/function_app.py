@@ -43,6 +43,8 @@ from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.url_allowlist import (
     ALLOWED_HOST_DESCRIPTION,
+    FOOTPRINT_ALLOWED_HOST_DESCRIPTION,
+    validate_footprint_url,
     validate_imagery_url,
 )
 from hastegeo.core.utils.user import InvitationManager, UserManager
@@ -215,6 +217,36 @@ def _validate_imagery_urls(image_data: ImageLayer) -> str | None:
     return None
 
 
+def _validate_user_building_footprints_url(
+    image_data: ImageLayer,
+) -> str | None:
+    """Validate the optional user-supplied building-footprint URL.
+
+    Returns a user-facing error message if the URL is set but not on the
+    footprint allowlist, or None otherwise. As with imagery URLs, the
+    full URL is logged server-side and only the rejected hostname is
+    surfaced to the client. The footprint allowlist matches the imagery
+    one plus the configured local upload host.
+    """
+    url = getattr(image_data, "userBuildingFootprintsUrl", None)
+    if not url:
+        return None
+    try:
+        validate_footprint_url(url)
+    except ValueError:
+        host = urlparse(url).hostname or "<unparseable>"
+        logger.warning(
+            "PutLayer rejected userBuildingFootprintsUrl not on allowlist: "
+            f"host={host}"
+        )
+        return (
+            "The user-supplied building-footprints URL is not on the "
+            f"allowlist of permitted hosts ({FOOTPRINT_ALLOWED_HOST_DESCRIPTION}). "
+            f"Rejected host: {host}."
+        )
+    return None
+
+
 def _decode_client_principal(req: func.HttpRequest) -> dict | None:
     """Decode SWA client principal header when present."""
     principal_header = req.headers.get("x-ms-client-principal")
@@ -345,6 +377,7 @@ async def UploadFileByChunk(req: func.HttpRequest) -> func.HttpResponse:
         chunk_number = form_data.get("chunk_number")
         total_chunks = form_data.get("total_chunks")
         action = form_data.get("action")
+        data_format = form_data.get("data_format")
         file_chunk = req.files.get("chunk")
 
         def missing_param_response(param_name):
@@ -366,14 +399,21 @@ async def UploadFileByChunk(req: func.HttpRequest) -> func.HttpResponse:
         chunk_number = int(chunk_number)
         total_chunks = int(total_chunks)
         file_uploader = FileUploader(project_id=project_id, config=config)
-        output = await asyncio.to_thread(
-            file_uploader.save_chunk,
-            file_id=file_id,
-            chunk_number=chunk_number,
-            total_chunks=total_chunks,
-            chunk_data=file_chunk,
-            action=action,
-        )
+        try:
+            output = await asyncio.to_thread(
+                file_uploader.save_chunk,
+                file_id=file_id,
+                chunk_number=chunk_number,
+                total_chunks=total_chunks,
+                chunk_data=file_chunk,
+                action=action,
+                data_format=data_format,
+            )
+        except ValueError as e:
+            # Reject unsupported data_format up-front so a hostile client
+            # cannot smuggle an arbitrary extension into the blob path.
+            logger.warning(f"UploadFileByChunk rejected request: {e}")
+            return func.HttpResponse(str(e), status_code=400)
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
     except Exception as e:
@@ -891,6 +931,12 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
         url_error = _validate_imagery_urls(image_data)
         if url_error:
             return func.HttpResponse(url_error, status_code=400)
+
+        footprint_url_error = _validate_user_building_footprints_url(
+            image_data
+        )
+        if footprint_url_error:
+            return func.HttpResponse(footprint_url_error, status_code=400)
 
         if image_data.imageLayerId is None:
             image_data.imageLayerId = MetadataUtils.generate_id()

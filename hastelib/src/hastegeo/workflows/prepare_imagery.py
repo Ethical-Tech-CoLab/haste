@@ -77,6 +77,7 @@ class ImageryWorkflow:
         image_layer_id=None,
         fine_tune=False,
         dst_directory=None,
+        user_building_footprints_url=None,
     ):
         """Initialize the ImageryWorkflow class.
         Args:
@@ -88,6 +89,10 @@ class ImageryWorkflow:
             image_layer_id (str): Image layer ID.
             fine_tune (bool): Flag to indicate if fine-tuning is needed.
             dst_directory (str): Directory to save processed files.
+            user_building_footprints_url (str): Optional URL to a user-supplied
+                building-footprints GeoPackage. When set, the workflow skips
+                the Overture Maps download and instead downloads, reprojects
+                (to EPSG:4326), and clips this file to the AOI.
         """
         self.pre_event_urls = pre_event_urls
         self.post_event_urls = post_event_urls
@@ -97,6 +102,7 @@ class ImageryWorkflow:
         self.image_layer_id = image_layer_id
         self.fine_tune = fine_tune
         self.dst_directory = dst_directory or os.path.join(".", "outputs")
+        self.user_building_footprints_url = user_building_footprints_url
 
         self.pre_event_raw_paths = []
         self.pre_event_preview_paths = []
@@ -111,12 +117,14 @@ class ImageryWorkflow:
         self.normalization_means = []
         self.normalization_stds = []
         self.building_footprints_path = ""
-        # Human-readable error captured when the building-footprint download
-        # fails. The download is intentionally a soft-failure inside this
-        # container (so the imagery COGs that have already been produced still
-        # get uploaded with the manifest), but the message is propagated
-        # through the manifest so ImageryPostProcessor can mark the image
-        # layer FAILED and surface the cause in the UI's statusMessage.
+        # Human-readable error captured when the building-footprint step
+        # fails — applies equally to the Overture download path and the
+        # user-supplied path. The step is intentionally a soft-failure
+        # inside this container (so the imagery COGs that have already
+        # been produced still get uploaded with the manifest), but the
+        # message is propagated through the manifest so
+        # ImageryPostProcessor can mark the image layer FAILED and
+        # surface the cause in the UI's statusMessage.
         self.building_footprints_error = ""
 
     def generate_prefix(self, prefix: Template):
@@ -406,6 +414,213 @@ class ImageryWorkflow:
         self.building_footprints_path = output_path
         self.building_footprints_error = ""
 
+    def process_user_building_footprints(self):
+        """Download, reproject, and clip a user-supplied building-footprint GPKG.
+
+        This is the user-supplied counterpart to
+        :meth:`download_building_footprints`. When the image layer was
+        created with ``userBuildingFootprintsUrl`` set, the workflow takes
+        this path *instead of* the Overture Maps download — the goal is
+        to produce a GPKG file with the same shape (name from the
+        BUILDING_FOOTPRINTS template, EPSG:4326, Polygon/MultiPolygon
+        only, ``id``/``geometry``/``subtype``/``class`` columns) so the
+        rest of the pipeline treats the two paths interchangeably.
+
+        Failure handling mirrors the Overture path: errors are captured
+        on ``self.building_footprints_error`` rather than raising, so the
+        manifest still uploads the imagery COGs that have already been
+        produced. ``ImageryPostProcessor`` reads the captured error and
+        marks the image layer FAILED with the same message.
+
+        Re-validates the URL via :func:`validate_footprint_url` before
+        download (defense-in-depth against config rewrites that bypass
+        the API allowlist check).
+        """
+        if not self.mosaic_post_event_tif_filepath or not os.path.exists(
+            self.mosaic_post_event_tif_filepath
+        ):
+            msg = (
+                "Cannot process user-supplied building footprints: "
+                "post-event mosaic is not available."
+            )
+            logger.error(msg)
+            self.building_footprints_path = ""
+            self.building_footprints_error = msg
+            return
+
+        try:
+            from hastegeo.core.utils.url_allowlist import (
+                validate_footprint_url,
+            )
+
+            validate_footprint_url(self.user_building_footprints_url)
+        except Exception as exc:
+            logger.error(
+                "User-supplied building-footprints URL failed validation "
+                "for image layer %s",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.building_footprints_path = ""
+            self.building_footprints_error = (
+                "User-supplied building-footprints URL is not allowed: "
+                f"{exc}"
+            )
+            return
+
+        try:
+            from hastegeo.core.utils.aoi import extract_aoi_polygon
+
+            aoi_polygon = extract_aoi_polygon(
+                self.mosaic_post_event_tif_filepath
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed extracting AOI for image layer %s",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.building_footprints_path = ""
+            self.building_footprints_error = (
+                "Failed to extract area-of-interest from the post-event "
+                "mosaic before processing custom building footprints: "
+                f"{exc}"
+            )
+            return
+
+        prefix = self.generate_prefix(BUILDING_FOOTPRINTS_PREFIX)
+        output_path = os.path.join(self.dst_directory, f"{prefix}.gpkg")
+
+        # Stage the download in a scratch dir so the runner's
+        # outputs/*.* upload glob doesn't accidentally upload the raw
+        # user input alongside the clipped artifact.
+        max_bytes = int(
+            os.getenv(
+                "HASTE_USER_FOOTPRINTS_MAX_BYTES", str(500 * 1024 * 1024)
+            )
+        )
+        download_timeout = int(
+            os.getenv("HASTE_USER_FOOTPRINTS_TIMEOUT_SECONDS", "300")
+        )
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="user_footprints_") as scratch:
+            staged_path = os.path.join(scratch, "user_footprints.gpkg")
+            try:
+                self._download_user_footprints_to(
+                    self.user_building_footprints_url,
+                    staged_path,
+                    max_bytes=max_bytes,
+                    timeout_seconds=download_timeout,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed downloading user-supplied building footprints "
+                    "for image layer %s",
+                    self.image_layer_id,
+                    exc_info=True,
+                )
+                self.building_footprints_path = ""
+                self.building_footprints_error = (
+                    "Failed to download user-supplied building footprints: "
+                    f"{exc}"
+                )
+                return
+
+            try:
+                from hastegeo.core.utils.footprints import (
+                    clip_and_normalize_user_footprints,
+                )
+
+                count = clip_and_normalize_user_footprints(
+                    input_path=staged_path,
+                    aoi_polygon=aoi_polygon,
+                    output_path=output_path,
+                    overwrite=True,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed clipping user-supplied building footprints "
+                    "for image layer %s",
+                    self.image_layer_id,
+                    exc_info=True,
+                )
+                self.building_footprints_path = ""
+                self.building_footprints_error = (
+                    "Failed to process user-supplied building footprints: "
+                    f"{exc}"
+                )
+                return
+
+        logger.info(
+            "Wrote %d user-supplied building footprints (clipped to AOI) "
+            "for image layer %s",
+            count,
+            self.image_layer_id,
+        )
+        self.building_footprints_path = output_path
+        self.building_footprints_error = ""
+
+    def _download_user_footprints_to(
+        self,
+        url: str,
+        output_path: str,
+        *,
+        max_bytes: int,
+        timeout_seconds: int,
+    ):
+        """Stream the user-supplied gpkg to ``output_path``.
+
+        Refuses to write past ``max_bytes`` (so a hostile or accidental
+        multi-GB upload can't OOM the imageryprep container) and refuses
+        to follow cross-host redirects (so an allowlisted source can't
+        bounce us to an internal host).
+        """
+        import requests
+
+        # Disable automatic redirect following so we can re-validate the
+        # final host before streaming bytes.
+        with requests.get(
+            url,
+            stream=True,
+            timeout=timeout_seconds,
+            allow_redirects=False,
+        ) as resp:
+            if resp.status_code in (301, 302, 303, 307, 308):
+                raise RuntimeError(
+                    "Redirects are not followed for user-supplied "
+                    f"building-footprint URLs (got {resp.status_code})."
+                )
+            resp.raise_for_status()
+
+            # Best-effort early-out on advertised size.
+            advertised = resp.headers.get("content-length")
+            if advertised is not None:
+                try:
+                    if int(advertised) > max_bytes:
+                        raise RuntimeError(
+                            f"User-supplied building footprints exceed the "
+                            f"max size of {max_bytes} bytes "
+                            f"(content-length={advertised})."
+                        )
+                except ValueError:
+                    pass
+
+            written = 0
+            with open(output_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1 << 20):
+                    if not chunk:
+                        continue
+                    written += len(chunk)
+                    if written > max_bytes:
+                        raise RuntimeError(
+                            f"User-supplied building footprints exceed the "
+                            f"max size of {max_bytes} bytes (aborted at "
+                            f"{written} bytes)."
+                        )
+                    f.write(chunk)
+
 
 def _download_imagery(urls, dst_directory):
     """Download imagery from provided URLs.
@@ -584,6 +799,9 @@ def main():
             source_type_post_event=config.get("source_type_post_event"),
             fine_tune=config.get("fine_tune", False),
             dst_directory=output_dir,
+            user_building_footprints_url=config.get(
+                "user_building_footprints_url"
+            ),
         )
 
         log_progress("Downloading imagery")
@@ -625,7 +843,12 @@ def main():
         config["normalization_stds"] = imagery_workflow.normalization_stds
 
         log_progress("Downloading building footprints")
-        imagery_workflow.download_building_footprints()
+        if imagery_workflow.user_building_footprints_url:
+            # User explicitly supplied a GPKG URL; skip the Overture
+            # download path entirely and clip/reproject the user file.
+            imagery_workflow.process_user_building_footprints()
+        else:
+            imagery_workflow.download_building_footprints()
         config["building_footprints_filename"] = (
             os.path.basename(imagery_workflow.building_footprints_path)
             if imagery_workflow.building_footprints_path
@@ -634,7 +857,8 @@ def main():
         # Propagate any captured failure message so ImageryPostProcessor
         # can mark the layer FAILED with a UI-displayable cause without
         # this subprocess having to raise (which would lose the imagery
-        # COGs we have already produced above).
+        # COGs we have already produced above). Applies equally to the
+        # Overture and user-supplied paths.
         config[
             "building_footprints_error"
         ] = imagery_workflow.building_footprints_error

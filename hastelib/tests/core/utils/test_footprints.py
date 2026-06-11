@@ -216,5 +216,355 @@ class TestDownloadBuildingFootprints(unittest.TestCase):
         final.to_file.assert_called_once_with(output, driver="GPKG")
 
 
+class TestClipAndNormalizeUserFootprints(unittest.TestCase):
+    """Tests for clip_and_normalize_user_footprints().
+
+    Uses small in-memory GeoDataFrames written to temporary .gpkg files
+    to exercise the real geopandas/fiona/shapely path. We deliberately
+    avoid mocking these so we catch issues with CRS handling, geometry
+    repair, clipping, and the .gpkg roundtrip — the failure modes most
+    likely to surprise users supplying ad-hoc inputs."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import geopandas  # noqa: F401
+            import shapely  # noqa: F401
+        except ImportError as e:  # pragma: no cover - env without GIS
+            raise unittest.SkipTest(f"geopandas/shapely not available: {e}")
+
+    def _aoi(self):
+        import shapely.geometry
+
+        return shapely.geometry.Polygon(
+            [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
+        )
+
+    def _write_input(self, dst_dir, gdf, name="in.gpkg"):
+        import os
+
+        path = os.path.join(dst_dir, name)
+        gdf.to_file(path, driver="GPKG")
+        return path
+
+    def test_happy_path_preserves_overlapping_polygons(self):
+        import os
+        import tempfile
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        inside = shapely.geometry.box(2, 2, 3, 3)
+        partial = shapely.geometry.box(8, 8, 12, 12)
+        outside = shapely.geometry.box(20, 20, 21, 21)
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": ["a", "b", "c"],
+                "subtype": ["residential", "commercial", "residential"],
+                "class": ["house", "office", "house"],
+                "geometry": [inside, partial, outside],
+            },
+            crs="EPSG:4326",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = self._write_input(tmp, gdf)
+            output_path = os.path.join(tmp, "out.gpkg")
+            count = clip_and_normalize_user_footprints(
+                input_path, self._aoi(), output_path
+            )
+
+            self.assertEqual(count, 2)
+            out = gpd.read_file(output_path)
+            self.assertEqual(len(out), 2)
+            self.assertEqual(out.crs.to_epsg(), 4326)
+            self.assertEqual(
+                set(out.columns), {"id", "geometry", "subtype", "class"}
+            )
+
+    def test_reprojects_from_web_mercator(self):
+        import os
+        import tempfile
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        # Build a polygon in 4326 around (0.001, 0.001) so it falls inside
+        # our AOI box (0,0)-(10,10), then project to Web Mercator before
+        # writing so the helper has to call to_crs.
+        small_4326 = shapely.geometry.box(0.001, 0.001, 0.002, 0.002)
+        gdf_4326 = gpd.GeoDataFrame(
+            {"id": ["a"], "geometry": [small_4326]}, crs="EPSG:4326"
+        )
+        gdf_3857 = gdf_4326.to_crs(epsg=3857)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = self._write_input(tmp, gdf_3857)
+            output_path = os.path.join(tmp, "out.gpkg")
+            count = clip_and_normalize_user_footprints(
+                input_path, self._aoi(), output_path
+            )
+
+            self.assertEqual(count, 1)
+            out = gpd.read_file(output_path)
+            self.assertEqual(out.crs.to_epsg(), 4326)
+            # Geometry should be close to the original 4326 box, not the
+            # huge mercator coords.
+            self.assertLess(out.geometry.iloc[0].bounds[2], 1.0)
+
+    def test_synthesizes_missing_id_subtype_class(self):
+        import os
+        import tempfile
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        polys = [
+            shapely.geometry.box(1, 1, 2, 2),
+            shapely.geometry.box(3, 3, 4, 4),
+        ]
+        gdf = gpd.GeoDataFrame(
+            {"geometry": polys}, crs="EPSG:4326"
+        )  # no id/subtype/class
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = self._write_input(tmp, gdf)
+            output_path = os.path.join(tmp, "out.gpkg")
+            count = clip_and_normalize_user_footprints(
+                input_path, self._aoi(), output_path
+            )
+
+            self.assertEqual(count, 2)
+            out = gpd.read_file(output_path)
+            # id synthesized from row index, others present but null
+            self.assertEqual(
+                sorted(out["id"].astype(str).tolist()), ["0", "1"]
+            )
+            self.assertTrue(out["subtype"].isna().all())
+            self.assertTrue(out["class"].isna().all())
+
+    def test_drops_non_polygon_features(self):
+        import os
+        import tempfile
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": ["p", "ln", "pt"],
+                "geometry": [
+                    shapely.geometry.box(1, 1, 2, 2),
+                    shapely.geometry.LineString([(3, 3), (4, 4)]),
+                    shapely.geometry.Point(5, 5),
+                ],
+            },
+            crs="EPSG:4326",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # GPKG doesn't accept heterogeneous geometries; write each
+            # feature to its own GeoJSON and merge them back into a GPKG.
+            paths = []
+            for i, row in gdf.iterrows():
+                p = os.path.join(tmp, f"row_{i}.geojson")
+                gpd.GeoDataFrame(
+                    [row], crs=gdf.crs, geometry="geometry"
+                ).to_file(p, driver="GeoJSON")
+                paths.append(p)
+            combined = gpd.GeoDataFrame(
+                gpd.pd.concat(
+                    [gpd.read_file(p) for p in paths], ignore_index=True
+                ),
+                crs="EPSG:4326",
+            )
+            input_gpkg = os.path.join(tmp, "mixed.gpkg")
+            combined.to_file(input_gpkg, driver="GPKG")
+            output_path = os.path.join(tmp, "out.gpkg")
+
+            count = clip_and_normalize_user_footprints(
+                input_gpkg, self._aoi(), output_path
+            )
+
+            # Only the polygon survives the polygon-only filter.
+            self.assertEqual(count, 1)
+            out = gpd.read_file(output_path)
+            self.assertTrue(
+                out.geometry.geom_type.isin(["Polygon", "MultiPolygon"]).all()
+            )
+
+    def test_fully_outside_aoi_raises(self):
+        import os
+        import tempfile
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        far = shapely.geometry.box(100, 100, 101, 101)
+        gdf = gpd.GeoDataFrame(
+            {"id": ["x"], "geometry": [far]}, crs="EPSG:4326"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = self._write_input(tmp, gdf)
+            output_path = os.path.join(tmp, "out.gpkg")
+            with self.assertRaises(ValueError):
+                clip_and_normalize_user_footprints(
+                    input_path, self._aoi(), output_path
+                )
+
+    def test_no_polygons_raises(self):
+        import os
+        import tempfile
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": ["a", "b"],
+                "geometry": [
+                    shapely.geometry.LineString([(1, 1), (2, 2)]),
+                    shapely.geometry.LineString([(3, 3), (4, 4)]),
+                ],
+            },
+            crs="EPSG:4326",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = os.path.join(tmp, "in.gpkg")
+            gdf.to_file(input_path, driver="GPKG")
+            output_path = os.path.join(tmp, "out.gpkg")
+            with self.assertRaises(ValueError) as cm:
+                clip_and_normalize_user_footprints(
+                    input_path, self._aoi(), output_path
+                )
+            self.assertIn("Polygon", str(cm.exception))
+
+    def test_missing_crs_raises(self):
+        """The helper must reject inputs without a CRS rather than silently
+        treating them as 4326. Stripping CRS from a read-back GeoJSON is
+        unreliable across drivers, so we patch :func:`geopandas.read_file`
+        to return a CRS-less GeoDataFrame directly."""
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        nocrs = gpd.GeoDataFrame(
+            {
+                "id": ["a"],
+                "geometry": [shapely.geometry.box(1, 1, 2, 2)],
+            },
+            crs=None,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = os.path.join(tmp, "in.gpkg")
+            # Just touch the input path so the helper's existence check
+            # (if any) doesn't fire; the read is mocked.
+            with open(input_path, "wb"):
+                pass
+            output_path = os.path.join(tmp, "out.gpkg")
+            with patch(
+                "hastegeo.core.utils.footprints.gpd.read_file",
+                return_value=nocrs,
+            ):
+                with self.assertRaises(ValueError) as cm:
+                    clip_and_normalize_user_footprints(
+                        input_path, self._aoi(), output_path
+                    )
+            self.assertIn("CRS", str(cm.exception))
+
+    def test_overwrite_false_rejects_existing_output(self):
+        import os
+        import tempfile
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": ["a"],
+                "geometry": [shapely.geometry.box(1, 1, 2, 2)],
+            },
+            crs="EPSG:4326",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = self._write_input(tmp, gdf)
+            output_path = os.path.join(tmp, "out.gpkg")
+            with open(output_path, "w") as f:
+                f.write("existing")
+            with self.assertRaises(FileExistsError):
+                clip_and_normalize_user_footprints(
+                    input_path, self._aoi(), output_path
+                )
+
+    def test_overwrite_true_replaces_existing_output(self):
+        import os
+        import tempfile
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": ["a"],
+                "geometry": [shapely.geometry.box(1, 1, 2, 2)],
+            },
+            crs="EPSG:4326",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = self._write_input(tmp, gdf)
+            output_path = os.path.join(tmp, "out.gpkg")
+            with open(output_path, "w") as f:
+                f.write("existing")
+            count = clip_and_normalize_user_footprints(
+                input_path, self._aoi(), output_path, overwrite=True
+            )
+            self.assertEqual(count, 1)
+
+    def test_rejects_non_gpkg_output_path(self):
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        with self.assertRaises(ValueError):
+            clip_and_normalize_user_footprints(
+                "/tmp/in.gpkg",
+                self._aoi(),
+                "/tmp/out.geojson",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
