@@ -25,9 +25,14 @@ const GuidedTour = () => {
 
   useEffect(() => {
     if (appParams.currentTour) {
-      if(!appParams.userSettings.disableGuidedTour || !validateIsGuidedTourDisabled(appParams.currentTour.cookieName)) {
-        setIsVisible(true);
-      }
+      const shouldShow =
+        !appParams.userSettings.disableGuidedTour &&
+        !validateIsGuidedTourDisabled(appParams.currentTour.cookieName);
+      // Explicitly reset rather than only flipping to true; otherwise a
+      // previously-shown tour leaves isVisible=true and a freshly-started
+      // tour that should be hidden ("Don't show again" already clicked)
+      // would briefly render before being dismissed.
+      setIsVisible(shouldShow);
 
       const filteredSteps = appParams.currentTour.steps.filter((step) => {
         if (step.type !== "teachingBubble") {
