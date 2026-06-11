@@ -31,7 +31,11 @@ logger = logging.getLogger(__name__)
 OVERTURE_ACCOUNT_NAME = "overturemapswestus2"
 FALLBACK_RELEASE = "2026-02-18.0"
 DEFAULT_FOOTPRINT_GEOJSON_SAMPLE_SIZE = 200
-MAX_FOOTPRINT_GEOJSON_FEATURES = 50000
+# Matches the cap PR #25's GetBuildingFootprintsGeoJSON endpoint set
+# deliberately to bound response size and server-side memory. Keep this
+# in sync with the Pydantic default on BuildingFootprintsOverlay so the
+# frontend never asks for more than the endpoint will serve.
+MAX_FOOTPRINT_GEOJSON_FEATURES = 2000
 # Matches Overture release names like "2026-02-18.0"
 _RELEASE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.\d+$")
 

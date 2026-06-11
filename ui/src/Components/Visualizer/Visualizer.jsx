@@ -31,6 +31,14 @@ const Visualizer = ({ setModalComponent }) => {
   const zoomControlRef = useRef(null);
   const buildingFootprintsLayersRef = useRef({});
   const buildingFootprintsGeoJsonRef = useRef(null);
+  // Captures the user's most recent toggle/opacity intent. Layers may not
+  // exist yet when the user interacts (the Azure Maps "ready" callback is
+  // async), so we record intent here and re-apply it when layers finally
+  // load. ``null`` means "no override, use the overlay defaults".
+  const buildingFootprintsOverridesRef = useRef({
+    visibility: null,
+    opacity: null,
+  });
   const [swipeStateMobile, setSwipeStateMobile] = useState("post");
 
   const [imageryValues, setImageryValues] = useState({
@@ -397,7 +405,7 @@ const Visualizer = ({ setModalComponent }) => {
     }
 
     if (!buildingFootprintsGeoJsonRef.current) {
-      const sampleSize = overlay.maxFeatures || 50000;
+      const sampleSize = overlay.maxFeatures ?? 2000;
       buildingFootprintsGeoJsonRef.current = apiGet(
         "GetBuildingFootprintsGeoJSON?projectId=" +
         projectId +
@@ -421,23 +429,27 @@ const Visualizer = ({ setModalComponent }) => {
         return;
       }
 
+      const overrides = buildingFootprintsOverridesRef.current;
+      const visible = overrides.visibility ?? true;
+      const opacity = overrides.opacity ?? (overlay.opacity ?? 0.25);
+
       const dataSource = new window.atlas.source.DataSource();
       map.sources.add(dataSource);
       dataSource.add(geojson);
 
       const fillLayer = new window.atlas.layer.PolygonLayer(dataSource, null, {
         fillColor: overlay.color || "#00FFFF",
-        fillOpacity: overlay.opacity ?? 0.25,
-        visible: true,
+        fillOpacity: opacity,
+        visible: visible,
       });
       fillLayer.customId = `${BUILDING_FOOTPRINTS_OVERLAY_ID}-fill`;
       map.layers.add(fillLayer);
 
       const lineLayer = new window.atlas.layer.LineLayer(dataSource, null, {
         strokeColor: overlay.color || "#00FFFF",
-        strokeOpacity: Math.min((overlay.opacity ?? 0.25) + 0.35, 1),
+        strokeOpacity: Math.min(opacity + 0.35, 1),
         strokeWidth: 1,
-        visible: true,
+        visible: visible,
       });
       lineLayer.customId = `${BUILDING_FOOTPRINTS_OVERLAY_ID}-line`;
       map.layers.add(lineLayer);
@@ -468,15 +480,19 @@ const Visualizer = ({ setModalComponent }) => {
   }
 
   function toggleBuildingFootprintsVisibility(isVisible) {
+    buildingFootprintsOverridesRef.current.visibility = isVisible;
     Object.values(buildingFootprintsLayersRef.current).forEach((layers) => {
       layers.forEach((layer) => layer.setOptions({ visible: isVisible }));
     });
   }
 
   function updateBuildingFootprintsOpacity(opacity) {
+    buildingFootprintsOverridesRef.current.opacity = opacity;
     Object.values(buildingFootprintsLayersRef.current).forEach((layers) => {
       layers.forEach((layer) => {
         if (layer.customId === `${BUILDING_FOOTPRINTS_OVERLAY_ID}-line`) {
+          // Outlines are biased ~0.35 above the fill so they stay visible
+          // even at low fill opacity (capped at 1 to avoid setOptions throws).
           layer.setOptions({ strokeOpacity: Math.min(opacity + 0.35, 1) });
         } else {
           layer.setOptions({ fillOpacity: opacity });

@@ -20,7 +20,10 @@ class BuildingFootprintsOverlay(BaseModel):
     name: str = Field(default="Building footprints")
     color: str = Field(default="#00FFFF")
     opacity: float = Field(default=0.25)
-    maxFeatures: int = Field(default=50000)
+    maxFeatures: int = Field(default=2000)
+    attribution: str = Field(
+        default="© Overture Maps Foundation contributors, ODbL"
+    )
 
 
 class Visualizer(BaseModel):

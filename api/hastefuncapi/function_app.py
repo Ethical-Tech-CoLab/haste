@@ -3114,8 +3114,9 @@ async def GetBuildingFootprintsGeoJSON(
         projectId (str): Parent project identifier.
         imageLayerId (str): Image layer identifier.
         sample (int, optional): Maximum number of buildings to return
-            (default 200). Clamped to the inclusive range [1, 50000] to bound
-            response size and server-side memory.
+            (default 200). Clamped to the inclusive range
+            [1, MAX_FOOTPRINT_GEOJSON_FEATURES] to bound response size and
+            server-side memory.
     """
     logger.info(
         "GetBuildingFootprintsGeoJSON HTTP trigger function processed a request."
@@ -3174,7 +3175,7 @@ async def GetBuildingFootprintsGeoJSON(
         return func.HttpResponse(
             geojson_str,
             status_code=200,
-            mimetype="application/geo+json",
+            mimetype="application/json",
         )
 
     except FileNotFoundError:

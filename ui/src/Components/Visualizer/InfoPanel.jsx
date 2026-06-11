@@ -99,6 +99,19 @@ const InfoPanel = ({
                     }
                     styles={{ root: { marginLeft: "22px", maxWidth: "150px" } }}
                   />
+                  {buildingFootprintsOverlay.attribution && (
+                    <Text
+                      variant="tiny"
+                      className="d-block"
+                      style={{
+                        marginLeft: "22px",
+                        color: "#666",
+                        marginTop: "2px",
+                      }}
+                    >
+                      {buildingFootprintsOverlay.attribution}
+                    </Text>
+                  )}
                 </div>
               )}
             </div>
