@@ -4,6 +4,7 @@ import {
   Checkbox,
   ActionButton,
   Text,
+  Slider,
 } from "@fluentui/react";
 
 import { useState, useContext } from "react";
@@ -14,13 +15,10 @@ const InfoPanel = ({
   togglePredictedDamageLayerVisibility,
   resetMapPosition,
   visualizerResults,
+  buildingFootprintsOverlay,
+  toggleBuildingFootprintsVisibility,
+  updateBuildingFootprintsOpacity,
 }) => {
-  InfoPanel.propTypes = {
-    togglePredictedDamageLayerVisibility: PropType.func.isRequired,
-    resetMapPosition: PropType.func.isRequired,
-    visualizerResults: PropType.object.isRequired,
-  };
-
   const [panelVisibility, setPanelVisibility] = useState("");
   const { appParams } = useContext(AppContext);
 
@@ -77,6 +75,32 @@ const InfoPanel = ({
                   )
                 }
               />
+              {buildingFootprintsOverlay?.available && (
+                <div className="mt-2">
+                  <Checkbox
+                    defaultChecked={true}
+                    label={
+                      buildingFootprintsOverlay.name || "Building footprints"
+                    }
+                    onChange={(e, checked) =>
+                      toggleBuildingFootprintsVisibility(checked)
+                    }
+                  />
+                  <Slider
+                    min={0}
+                    max={100}
+                    step={5}
+                    defaultValue={
+                      (buildingFootprintsOverlay.opacity ?? 0.25) * 100
+                    }
+                    showValue={false}
+                    onChange={(value) =>
+                      updateBuildingFootprintsOpacity(value / 100)
+                    }
+                    styles={{ root: { marginLeft: "22px", maxWidth: "150px" } }}
+                  />
+                </div>
+              )}
             </div>
           </div>
           <div className="d-flex flex-column">
@@ -105,6 +129,15 @@ const InfoPanel = ({
       </div>
     </>
   );
+};
+
+InfoPanel.propTypes = {
+  togglePredictedDamageLayerVisibility: PropType.func.isRequired,
+  resetMapPosition: PropType.func.isRequired,
+  visualizerResults: PropType.object.isRequired,
+  buildingFootprintsOverlay: PropType.object,
+  toggleBuildingFootprintsVisibility: PropType.func.isRequired,
+  updateBuildingFootprintsOpacity: PropType.func.isRequired,
 };
 
 export default InfoPanel;

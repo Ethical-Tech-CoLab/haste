@@ -12,6 +12,8 @@ import VisualizerImageryControls from "./VisualizerImageryControls"
 import "../../assets/css/visualizer.css";
 import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
 
+const BUILDING_FOOTPRINTS_OVERLAY_ID = "buildingFootprints";
+
 
 const Visualizer = ({ setModalComponent }) => {
   Visualizer.propTypes = {
@@ -27,6 +29,8 @@ const Visualizer = ({ setModalComponent }) => {
   const secondaryMapRef = useRef(null);
   const swipeMapRef = useRef(null);
   const zoomControlRef = useRef(null);
+  const buildingFootprintsLayersRef = useRef({});
+  const buildingFootprintsGeoJsonRef = useRef(null);
   const [swipeStateMobile, setSwipeStateMobile] = useState("post");
 
   const [imageryValues, setImageryValues] = useState({
@@ -176,11 +180,16 @@ const Visualizer = ({ setModalComponent }) => {
           );
 
           await loadStudyArea(primaryMap, visualizerResults.studyArea);
+          await loadBuildingFootprintsLayer(
+            primaryMap,
+            visualizerResults.buildingFootprintsOverlay,
+            "primary"
+          );
 
         });
 
         // Secondary map event listeners
-        secondaryMap.events.add("ready", function () {
+        secondaryMap.events.add("ready", async function () {
           // Avoid map rotation
           avoidRotation(secondaryMap);
 
@@ -200,7 +209,12 @@ const Visualizer = ({ setModalComponent }) => {
             visualizerResults.predictionsLayer
           );
 
-          loadStudyArea(secondaryMap, visualizerResults.studyArea);
+          await loadStudyArea(secondaryMap, visualizerResults.studyArea);
+          await loadBuildingFootprintsLayer(
+            secondaryMap,
+            visualizerResults.buildingFootprintsOverlay,
+            "secondary"
+          );
         });
 
         // Assign maps to refs
@@ -377,6 +391,63 @@ const Visualizer = ({ setModalComponent }) => {
     map.layers.add(layer);
   }
 
+  async function getBuildingFootprintsGeoJson(overlay) {
+    if (!overlay || !overlay.available) {
+      return null;
+    }
+
+    if (!buildingFootprintsGeoJsonRef.current) {
+      const sampleSize = overlay.maxFeatures || 50000;
+      buildingFootprintsGeoJsonRef.current = apiGet(
+        "GetBuildingFootprintsGeoJSON?projectId=" +
+        projectId +
+        "&imageLayerId=" +
+        imageLayerId +
+        "&sample=" +
+        sampleSize
+      ).catch((error) => {
+        buildingFootprintsGeoJsonRef.current = null;
+        throw error;
+      });
+    }
+
+    return await buildingFootprintsGeoJsonRef.current;
+  }
+
+  async function loadBuildingFootprintsLayer(map, overlay, mapKey) {
+    try {
+      const geojson = await getBuildingFootprintsGeoJson(overlay);
+      if (!geojson || !geojson.features || geojson.features.length === 0) {
+        return;
+      }
+
+      const dataSource = new window.atlas.source.DataSource();
+      map.sources.add(dataSource);
+      dataSource.add(geojson);
+
+      const fillLayer = new window.atlas.layer.PolygonLayer(dataSource, null, {
+        fillColor: overlay.color || "#00FFFF",
+        fillOpacity: overlay.opacity ?? 0.25,
+        visible: true,
+      });
+      fillLayer.customId = `${BUILDING_FOOTPRINTS_OVERLAY_ID}-fill`;
+      map.layers.add(fillLayer);
+
+      const lineLayer = new window.atlas.layer.LineLayer(dataSource, null, {
+        strokeColor: overlay.color || "#00FFFF",
+        strokeOpacity: Math.min((overlay.opacity ?? 0.25) + 0.35, 1),
+        strokeWidth: 1,
+        visible: true,
+      });
+      lineLayer.customId = `${BUILDING_FOOTPRINTS_OVERLAY_ID}-line`;
+      map.layers.add(lineLayer);
+
+      buildingFootprintsLayersRef.current[mapKey] = [fillLayer, lineLayer];
+    } catch (error) {
+      console.error("Error loading building footprints overlay:", error);
+    }
+  }
+
   // Get layer by customId
   function getLayerById(currentMap, customId) {
     const layers = currentMap.current.layers.getLayers();
@@ -394,6 +465,24 @@ const Visualizer = ({ setModalComponent }) => {
     if (layer2) {
       layer2.setOptions({ visible: isVisible });
     }
+  }
+
+  function toggleBuildingFootprintsVisibility(isVisible) {
+    Object.values(buildingFootprintsLayersRef.current).forEach((layers) => {
+      layers.forEach((layer) => layer.setOptions({ visible: isVisible }));
+    });
+  }
+
+  function updateBuildingFootprintsOpacity(opacity) {
+    Object.values(buildingFootprintsLayersRef.current).forEach((layers) => {
+      layers.forEach((layer) => {
+        if (layer.customId === `${BUILDING_FOOTPRINTS_OVERLAY_ID}-line`) {
+          layer.setOptions({ strokeOpacity: Math.min(opacity + 0.35, 1) });
+        } else {
+          layer.setOptions({ fillOpacity: opacity });
+        }
+      });
+    });
   }
 
   // Convert date to string for visualizer title
@@ -474,6 +563,8 @@ const Visualizer = ({ setModalComponent }) => {
         visualizerResults={globalVisualizerResults}
         setSwipeStateMobile={setSwipeStateMobile}
         swipeStateMobile={swipeStateMobile}
+        toggleBuildingFootprintsVisibility={toggleBuildingFootprintsVisibility}
+        updateBuildingFootprintsOpacity={updateBuildingFootprintsOpacity}
       />
 
       <VisualizerImageryControls

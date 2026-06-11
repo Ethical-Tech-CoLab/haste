@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Dependencies 
-import { ActionButton, Text, Link, Toggle } from "@fluentui/react";
+import { ActionButton, Text, Link } from "@fluentui/react";
 import { useNavigate } from "react-router-dom";
 import { convertDateToString } from "../../util/conversion";
 import { sourceTypeOptions } from "../CreateEditImageLayerHelper";
@@ -15,7 +15,9 @@ const Labels = ({
   resetMapPosition,
   visualizerResults,
   setSwipeStateMobile,
-  swipeStateMobile
+  swipeStateMobile,
+  toggleBuildingFootprintsVisibility,
+  updateBuildingFootprintsOpacity,
 }) => {
   Labels.propTypes = {
     togglePredictedDamageLayerVisibility: PropType.func.isRequired,
@@ -23,6 +25,8 @@ const Labels = ({
     visualizerResults: PropType.object.isRequired,
     setSwipeStateMobile: PropType.func.isRequired,
     swipeStateMobile: PropType.string.isRequired,
+    toggleBuildingFootprintsVisibility: PropType.func.isRequired,
+    updateBuildingFootprintsOpacity: PropType.func.isRequired,
   };
 
   const navigate = useNavigate();
@@ -137,6 +141,13 @@ const Labels = ({
             }
             resetMapPosition={resetMapPosition}
             visualizerResults={visualizerResults}
+            buildingFootprintsOverlay={
+              visualizerResults.buildingFootprintsOverlay
+            }
+            toggleBuildingFootprintsVisibility={
+              toggleBuildingFootprintsVisibility
+            }
+            updateBuildingFootprintsOpacity={updateBuildingFootprintsOpacity}
           />
         </>
       )}

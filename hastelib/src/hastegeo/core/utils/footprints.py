@@ -13,6 +13,7 @@ workflow (now slated to consume the cached gpkg).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -29,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 OVERTURE_ACCOUNT_NAME = "overturemapswestus2"
 FALLBACK_RELEASE = "2026-02-18.0"
+DEFAULT_FOOTPRINT_GEOJSON_SAMPLE_SIZE = 200
+MAX_FOOTPRINT_GEOJSON_FEATURES = 50000
 # Matches Overture release names like "2026-02-18.0"
 _RELEASE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.\d+$")
 
@@ -380,6 +383,53 @@ def clip_and_normalize_user_footprints(
         output_path,
     )
     return int(out.shape[0])
+
+
+def building_footprints_to_geojson(
+    input_path: str,
+    *,
+    sample_size: int = DEFAULT_FOOTPRINT_GEOJSON_SAMPLE_SIZE,
+    random_state: int = 42,
+) -> str:
+    """Convert cached building footprints to GeoJSON for map overlays.
+
+    The cached input must be a GeoPackage produced by HASTE's imageryprep
+    workflow. The returned FeatureCollection is polygon-only, EPSG:4326, and
+    limited to ``sample_size`` features with deterministic sampling.
+    """
+    if not HAS_GEOPANDAS:
+        raise ImportError("geopandas is required to use this function")
+    if sample_size < 1:
+        raise ValueError("sample_size must be at least 1")
+
+    gdf = gpd.read_file(input_path)
+    if gdf.empty:
+        return json.dumps({"type": "FeatureCollection", "features": []})
+    if gdf.crs is None:
+        raise ValueError(
+            f"Building footprints GeoPackage has no CRS: {input_path}"
+        )
+
+    gdf = gdf[gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
+    if gdf.empty:
+        return json.dumps({"type": "FeatureCollection", "features": []})
+
+    if gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(epsg=4326)
+
+    if len(gdf) > sample_size:
+        gdf = gdf.sample(n=sample_size, random_state=random_state)
+
+    if "id" not in gdf.columns:
+        gdf = gdf.reset_index(drop=True)
+        gdf["id"] = gdf.index.astype(str)
+
+    keep_cols = [
+        col
+        for col in ["id", "subtype", "class", "geometry"]
+        if col in gdf.columns
+    ]
+    return gdf[keep_cols].to_json()
 
 
 def _main():

@@ -186,8 +186,8 @@ class TestDownloadBuildingFootprints(unittest.TestCase):
         gdf = MagicMock()
         # gdf[["id", "geometry", "subtype", "class"]] -> filtered_gdf
         filtered = MagicMock()
-        gdf.__getitem__.side_effect = (
-            lambda key: filtered if isinstance(key, list) else gdf
+        gdf.__getitem__.side_effect = lambda key: (
+            filtered if isinstance(key, list) else gdf
         )
         # filtered[mask] returns final gdf with .shape / .set_crs / .to_file
         final = MagicMock()
@@ -564,6 +564,136 @@ class TestClipAndNormalizeUserFootprints(unittest.TestCase):
                 self._aoi(),
                 "/tmp/out.geojson",
             )
+
+
+class TestBuildingFootprintsToGeoJSON(unittest.TestCase):
+    """Tests for building_footprints_to_geojson()."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import geopandas  # noqa: F401
+            import shapely  # noqa: F401
+        except ImportError as e:  # pragma: no cover - env without GIS
+            raise unittest.SkipTest(f"geopandas/shapely not available: {e}")
+
+    def test_reprojects_filters_and_samples(self):
+        import json
+        from unittest.mock import patch
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            building_footprints_to_geojson,
+        )
+
+        gdf_4326 = gpd.GeoDataFrame(
+            {
+                "id": ["a", "b", "line"],
+                "subtype": ["residential", "commercial", "road"],
+                "class": ["house", "office", "road"],
+                "unused": ["drop", "drop", "drop"],
+                "geometry": [
+                    shapely.geometry.box(0, 0, 0.001, 0.001),
+                    shapely.geometry.box(0.002, 0.002, 0.003, 0.003),
+                    shapely.geometry.LineString([(0, 0), (1, 1)]),
+                ],
+            },
+            crs="EPSG:4326",
+        )
+        gdf_3857 = gdf_4326.to_crs(epsg=3857)
+
+        with patch(
+            "hastegeo.core.utils.footprints.gpd.read_file",
+            return_value=gdf_3857,
+        ):
+            geojson = building_footprints_to_geojson(
+                "ignored.gpkg", sample_size=1
+            )
+
+        data = json.loads(geojson)
+        self.assertEqual(data["type"], "FeatureCollection")
+        self.assertEqual(len(data["features"]), 1)
+        feature = data["features"][0]
+        self.assertIn(feature["properties"]["id"], {"a", "b"})
+        self.assertIn("subtype", feature["properties"])
+        self.assertIn("class", feature["properties"])
+        self.assertNotIn("unused", feature["properties"])
+        self.assertIn(feature["geometry"]["type"], ["Polygon", "MultiPolygon"])
+        self.assertLess(abs(feature["geometry"]["coordinates"][0][0][0]), 1)
+
+    def test_synthesizes_id_when_missing(self):
+        import json
+        from unittest.mock import patch
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            building_footprints_to_geojson,
+        )
+
+        gdf = gpd.GeoDataFrame(
+            {"geometry": [shapely.geometry.box(1, 1, 2, 2)]},
+            crs="EPSG:4326",
+        )
+
+        with patch(
+            "hastegeo.core.utils.footprints.gpd.read_file", return_value=gdf
+        ):
+            geojson = building_footprints_to_geojson(
+                "ignored.gpkg", sample_size=10
+            )
+
+        data = json.loads(geojson)
+        self.assertEqual(data["features"][0]["properties"]["id"], "0")
+
+    def test_missing_crs_raises(self):
+        from unittest.mock import patch
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            building_footprints_to_geojson,
+        )
+
+        gdf = gpd.GeoDataFrame(
+            {"id": ["a"], "geometry": [shapely.geometry.box(1, 1, 2, 2)]},
+            crs=None,
+        )
+
+        with patch(
+            "hastegeo.core.utils.footprints.gpd.read_file", return_value=gdf
+        ):
+            with self.assertRaises(ValueError) as cm:
+                building_footprints_to_geojson("ignored.gpkg")
+        self.assertIn("CRS", str(cm.exception))
+
+    def test_no_polygons_returns_empty_feature_collection(self):
+        import json
+        from unittest.mock import patch
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            building_footprints_to_geojson,
+        )
+
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": ["line"],
+                "geometry": [shapely.geometry.LineString([(0, 0), (1, 1)])],
+            },
+            crs="EPSG:4326",
+        )
+
+        with patch(
+            "hastegeo.core.utils.footprints.gpd.read_file", return_value=gdf
+        ):
+            geojson = building_footprints_to_geojson("ignored.gpkg")
+
+        self.assertEqual(
+            json.loads(geojson), {"type": "FeatureCollection", "features": []}
+        )
 
 
 if __name__ == "__main__":

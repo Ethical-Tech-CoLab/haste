@@ -30,7 +30,11 @@ from hastegeo.core.models.stats import (
 )
 from hastegeo.core.models.training import CatalogModel
 from hastegeo.core.models.users import User
-from hastegeo.core.models.visualizer import Imagery, Visualizer
+from hastegeo.core.models.visualizer import (
+    BuildingFootprintsOverlay,
+    Imagery,
+    Visualizer,
+)
 from hastegeo.core.processors.artifacts import ArtifactProcessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
@@ -39,6 +43,11 @@ from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
+from hastegeo.core.utils.footprints import (
+    DEFAULT_FOOTPRINT_GEOJSON_SAMPLE_SIZE,
+    MAX_FOOTPRINT_GEOJSON_FEATURES,
+    building_footprints_to_geojson,
+)
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.url_allowlist import (
@@ -2109,6 +2118,10 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
                     else None
                 ),
             ),
+            buildingFootprintsOverlay=BuildingFootprintsOverlay(
+                available=bool(image_layer.buildingFootprintsUrl),
+                maxFeatures=MAX_FOOTPRINT_GEOJSON_FEATURES,
+            ),
             sourceTypePreEvent=image_layer.sourceTypePreEvent,
             sourceTypePostEvent=image_layer.sourceTypePostEvent,
             imageryCaptureDatePreEvent=image_layer.imageryCaptureDatePreEvent,
@@ -3090,7 +3103,7 @@ async def GetAzureMapsToken(req: func.HttpRequest) -> func.HttpResponse:
 async def GetBuildingFootprintsGeoJSON(
     req: func.HttpRequest,
 ) -> func.HttpResponse:
-    """Return a random sample of building footprints as a GeoJSON FeatureCollection.
+    """Return building footprints as a GeoJSON FeatureCollection.
 
     Reads the cached .gpkg file from blob storage for the given image layer,
     selects a random sample of up to ``sample`` buildings, and returns them as
@@ -3101,7 +3114,7 @@ async def GetBuildingFootprintsGeoJSON(
         projectId (str): Parent project identifier.
         imageLayerId (str): Image layer identifier.
         sample (int, optional): Maximum number of buildings to return
-            (default 200). Clamped to the inclusive range [1, 2000] to bound
+            (default 200). Clamped to the inclusive range [1, 50000] to bound
             response size and server-side memory.
     """
     logger.info(
@@ -3111,22 +3124,23 @@ async def GetBuildingFootprintsGeoJSON(
     try:
         import os as _os
 
-        import geopandas as gpd
-
-        project_id = req.params.get("projectId")
-        image_layer_id = req.params.get("imageLayerId")
         try:
-            requested_sample = int(req.params.get("sample", 200))
+            project_id = _require_guid_param(req, "projectId")
+            image_layer_id = _require_guid_param(req, "imageLayerId")
+        except ValueError as ve:
+            return _bad_request(f"GetBuildingFootprintsGeoJSON: {ve}")
+
+        try:
+            requested_sample = int(
+                req.params.get("sample", DEFAULT_FOOTPRINT_GEOJSON_SAMPLE_SIZE)
+            )
         except (TypeError, ValueError):
-            requested_sample = 200
+            requested_sample = DEFAULT_FOOTPRINT_GEOJSON_SAMPLE_SIZE
         # Clamp to a sane range so callers can't accidentally pull the
         # entire dataset (which can be millions of features) into memory.
-        sample_size = max(1, min(requested_sample, 2000))
-
-        if not project_id or not image_layer_id:
-            return func.HttpResponse(
-                "projectId and imageLayerId are required.", status_code=400
-            )
+        sample_size = max(
+            1, min(requested_sample, MAX_FOOTPRINT_GEOJSON_FEATURES)
+        )
 
         # Load the image layer metadata to get the buildingFootprintsUrl.
         image_layer_data = await asyncio.to_thread(
@@ -3150,27 +3164,17 @@ async def GetBuildingFootprintsGeoJSON(
             footprints_url, suffix=".gpkg"
         )
 
-        gdf = await asyncio.to_thread(gpd.read_file, tmp_path)
-
-        # Random sample (fixed random_state so repeated calls return the
-        # same subset; the visualizer page shouldn't reshuffle on refresh).
-        if len(gdf) > sample_size:
-            gdf = gdf.sample(n=sample_size, random_state=42)
-
-        # Ensure only the columns we care about are returned.
-        keep_cols = [
-            c
-            for c in ["id", "subtype", "class", "geometry"]
-            if c in gdf.columns
-        ]
-        gdf = gdf[keep_cols]
-
-        geojson_str = await asyncio.to_thread(lambda: gdf.to_json())
+        geojson_str = await asyncio.to_thread(
+            building_footprints_to_geojson,
+            tmp_path,
+            sample_size=sample_size,
+            random_state=42,
+        )
 
         return func.HttpResponse(
             geojson_str,
             status_code=200,
-            mimetype="application/json",
+            mimetype="application/geo+json",
         )
 
     except FileNotFoundError:

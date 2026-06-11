@@ -15,6 +15,14 @@ class Imagery(BaseModel):
     bounds: list = Field(default_factory=list)
 
 
+class BuildingFootprintsOverlay(BaseModel):
+    available: bool = Field(default=False)
+    name: str = Field(default="Building footprints")
+    color: str = Field(default="#00FFFF")
+    opacity: float = Field(default=0.25)
+    maxFeatures: int = Field(default=50000)
+
+
 class Visualizer(BaseModel):
     projectId: str = Field(default="")
     imageLayerId: str = Field(default="")
@@ -27,6 +35,9 @@ class Visualizer(BaseModel):
     postDisasterImagery: Imagery = Field(default_factory=Imagery)
     predictedDamageLayer: Imagery = Field(default_factory=Imagery)
     predictionsLayer: Imagery = Field(default_factory=Imagery)
+    buildingFootprintsOverlay: BuildingFootprintsOverlay = Field(
+        default_factory=BuildingFootprintsOverlay
+    )
     sourceTypePreEvent: Optional[str] = Field(default=None)
     sourceTypePostEvent: Optional[str] = Field(default=None)
     imageryCaptureDatePreEvent: Optional[str] = Field(default=None)
