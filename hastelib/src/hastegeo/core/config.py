@@ -296,6 +296,10 @@ class Config:
             RAW_IMAGERY = "raw_imagery"
             PREVIEW_RAW_IMAGERY = "preview_raw_imagery"
             VALIDATION = "validation"
+            # Per-embedding-model labels from the interactive labeler — kept
+            # separate from the layer-scoped Building Validation (VALIDATION)
+            # store so the two workflows don't overwrite each other.
+            INTERACTIVE_VALIDATION = "interactive_validation"
 
         return DataTypes
 

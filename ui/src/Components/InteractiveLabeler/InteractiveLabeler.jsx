@@ -47,6 +47,11 @@ const CLASS_TO_VALIDATION = {
   [CLASS_DAMAGED]: "Damaged",
   [CLASS_CLOUDY]: "Unknown",
 };
+const VALIDATION_TO_CLASS = {
+  NotDamaged: CLASS_INTACT,
+  Damaged: CLASS_DAMAGED,
+  Unknown: CLASS_CLOUDY,
+};
 
 const CLASS_OPTIONS = [
   { key: String(CLASS_INTACT), text: "Intact" },
@@ -147,6 +152,32 @@ const InteractiveLabeler = () => {
     featuresRef.current = featuresArr;
     if (featuresArr.length > 0 && featuresArr[0].properties) {
       featureKeysRef.current = detectFeatureKeys(featuresArr[0].properties);
+    }
+
+    // Restore this model's previously-saved interactive labels (separate from
+    // the Building Validation store) so reopening the labeler resumes work.
+    try {
+      const saved = await apiGet(
+        `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`
+      );
+      const savedLabels = saved?.labels || {};
+      if (Object.keys(savedLabels).length > 0) {
+        for (const f of featuresArr) {
+          const overtureId = f.properties?.overture_id ?? f.properties?.id;
+          const entry = savedLabels[overtureId];
+          if (!entry) continue;
+          const cls = VALIDATION_TO_CLASS[entry.label];
+          if (cls == null) continue;
+          const vec = extractFeatureVector(
+            f.properties,
+            featureKeysRef.current
+          );
+          labeledMapRef.current[f.properties.id] = { label: cls, features: vec };
+        }
+        refreshCounts();
+      }
+    } catch {
+      // No saved labels yet — start fresh.
     }
 
     const map = new window.atlas.Map(mapContainerRef.current, {
@@ -556,7 +587,9 @@ const InteractiveLabeler = () => {
     setIsSaving(true);
     setIsLoading(true, "Saving predictions…");
     try {
-      // 1. Manual labels -> validation store (keyed by Overture id).
+      // 1. Manual labels -> model-scoped interactive-labeler store (keyed by
+      // Overture id). This is SEPARATE from the layer-scoped Building
+      // Validation store, so the two workflows don't overwrite each other.
       const labels = {};
       for (const f of featuresRef.current) {
         const entry = labeledMapRef.current[f.properties?.id];
@@ -568,9 +601,10 @@ const InteractiveLabeler = () => {
           updatedAt: new Date().toISOString(),
         };
       }
-      await apiPut("PutBuildingValidation", {
+      await apiPut("PutInteractiveLabels", {
         projectId,
         imageLayerId,
+        modelId,
         labels,
       });
 

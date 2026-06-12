@@ -3481,6 +3481,126 @@ async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 
+def _validation_label_source(model_data: dict, image_layer_id: str) -> dict:
+    """Pick the label store for a model's Validation/Assessment report.
+
+    Embedding models (building labeling workflow) keep their interactive-labeler
+    labels in the model-scoped INTERACTIVE_VALIDATION store; standard models use
+    the layer-scoped Building Validation (VALIDATION) store. Returns the
+    metadata ``type`` value and the ``key`` to load.
+    """
+    types = config.get_metadata_types()
+    if model_data.get("modelType") == "embedding":
+        return {
+            "type": types.INTERACTIVE_VALIDATION.value,
+            "key": model_data.get("modelId"),
+        }
+    return {"type": types.VALIDATION.value, "key": image_layer_id}
+
+
+@app.route(
+    route="GetInteractiveLabels",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetInteractiveLabels(req: func.HttpRequest) -> func.HttpResponse:
+    """Return the interactive labeler's labels for an embedding model.
+
+    These live in a separate (model-scoped) store from the layer-scoped
+    Building Validation labels so the two workflows stay independent.
+
+    Query params: projectId, modelId. Returns {"labels": {...}} (empty if none).
+    """
+    logger.info(
+        "GetInteractiveLabels HTTP trigger function processed a request."
+    )
+    try:
+        project_id = req.params.get("projectId")
+        model_id = req.params.get("modelId")
+        if not project_id or not model_id:
+            return func.HttpResponse(
+                "projectId and modelId are required.", status_code=400
+            )
+        try:
+            data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().INTERACTIVE_VALIDATION.value,
+                    partition_key=project_id,
+                ).load,
+                model_id,
+            )
+        except FileNotFoundError:
+            data = {"modelId": model_id, "projectId": project_id, "labels": {}}
+
+        return func.HttpResponse(
+            json.dumps(data), status_code=200, mimetype="application/json"
+        )
+    except Exception as e:
+        logger.error(
+            f"Error in GetInteractiveLabels: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error fetching interactive labels.", status_code=500
+        )
+
+
+@app.route(
+    route="PutInteractiveLabels",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutInteractiveLabels(req: func.HttpRequest) -> func.HttpResponse:
+    """Save the interactive labeler's labels for an embedding model.
+
+    Stored in the INTERACTIVE_VALIDATION store keyed by modelId — separate
+    from the Building Validation (VALIDATION) store keyed by imageLayerId.
+
+    Body: { projectId, imageLayerId, modelId, labels: { <overture-id>: {...} } }
+    """
+    logger.info(
+        "PutInteractiveLabels HTTP trigger function processed a request."
+    )
+    try:
+        body = req.get_json()
+        project_id = body.get("projectId")
+        model_id = body.get("modelId")
+        if not project_id or not model_id:
+            return func.HttpResponse(
+                "projectId and modelId are required.", status_code=400
+            )
+        data = {
+            "modelId": model_id,
+            "imageLayerId": body.get("imageLayerId"),
+            "projectId": project_id,
+            "labels": body.get("labels") or {},
+        }
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().INTERACTIVE_VALIDATION.value,
+                partition_key=project_id,
+            ).save,
+            model_id,
+            data,
+        )
+        return func.HttpResponse(
+            json.dumps(data), status_code=200, mimetype="application/json"
+        )
+    except ValueError as e:
+        logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
+        return func.HttpResponse(
+            "Invalid JSON in request body.", status_code=400
+        )
+    except Exception as e:
+        logger.error(
+            f"Error in PutInteractiveLabels: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error saving interactive labels.", status_code=500
+        )
+
+
 @app.route(
     route="GetValidationReport",
     auth_level=AUTH_LEVEL,
@@ -3533,39 +3653,7 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
             )
 
-        # ── 1. Load validation labels ──────────────────────────────────────────
-        try:
-            validation_data = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().VALIDATION.value,
-                    partition_key=project_id,
-                ).load,
-                image_layer_id,
-            )
-        except FileNotFoundError:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": "No validation labels found for this image layer."
-                    }
-                ),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        labels_dict = validation_data.get("labels") or {}
-        if not labels_dict:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": "No validation labels found for this image layer."
-                    }
-                ),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        # ── 2. Load model to get gpkgUrl ───────────────────────────────────────
+        # ── 1. Load model (modelType picks the label store; gpkgUrl needed) ────
         model_data = await asyncio.to_thread(
             MetadataProcessor(
                 data_type=config.get_metadata_types().MODEL.value,
@@ -3580,6 +3668,33 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                 json.dumps(
                     {"error": "No inference results available for this model."}
                 ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # ── 2. Load labels from the right store ────────────────────────────────
+        # Embedding models (building workflow) use the model-scoped interactive
+        # labels; standard models use the layer-scoped Building Validation store.
+        label_meta = _validation_label_source(model_data, image_layer_id)
+        try:
+            validation_data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=label_meta["type"],
+                    partition_key=project_id,
+                ).load,
+                label_meta["key"],
+            )
+        except FileNotFoundError:
+            return func.HttpResponse(
+                json.dumps({"error": "No validation labels found."}),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        labels_dict = validation_data.get("labels") or {}
+        if not labels_dict:
+            return func.HttpResponse(
+                json.dumps({"error": "No validation labels found."}),
                 status_code=404,
                 mimetype="application/json",
             )
@@ -3850,14 +3965,16 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
         # Validation labels are optional for the assessment report — the
         # CLI script can produce the damage-count estimate without labels,
         # and the modal renders that section regardless. The metrics
-        # section is what needs labels.
+        # section is what needs labels. Embedding models read their labels
+        # from the model-scoped interactive-labeler store.
+        label_meta = _validation_label_source(model_data, image_layer_id)
         try:
             validation_data = await asyncio.to_thread(
                 MetadataProcessor(
-                    data_type=config.get_metadata_types().VALIDATION.value,
+                    data_type=label_meta["type"],
                     partition_key=project_id,
                 ).load,
-                image_layer_id,
+                label_meta["key"],
             )
             labels_dict = validation_data.get("labels") or {}
         except FileNotFoundError:
