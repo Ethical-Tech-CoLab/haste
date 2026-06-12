@@ -30,12 +30,13 @@ import {
   CLASS_CLOUDY,
   CLASS_DAMAGED,
   CLASS_INTACT,
-  buildModel,
   crossValidateDamaged,
   detectFeatureKeys,
   extractFeatureVector,
   isValidVector,
+  predictClasses,
 } from "./interactiveModel.js";
+import { getGpu } from "./gpuLogreg.js";
 
 // Class colors (match index.html). Index = class number.
 const CLASS_COLORS = ["#107C10", "#C50F1F", "#5B5FC7"]; // intact, damaged, cloudy
@@ -81,6 +82,8 @@ const InteractiveLabeler = () => {
 
   const boxRef = useRef(null); // box-select rectangle div
   const boxCleanupRef = useRef(null); // detaches document-level drag listeners
+  const trainBusyRef = useRef(false); // a train/predict run is in flight
+  const trainPendingRef = useRef(false); // a newer run was requested while busy
 
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectedClass, setSelectedClass] = useState(CLASS_DAMAGED);
@@ -92,6 +95,7 @@ const InteractiveLabeler = () => {
   const [status, setStatus] = useState("");
   const [mapInfo, setMapInfo] = useState({ lat: 0, lon: 0, zoom: 0 });
   const [buildingCount, setBuildingCount] = useState(0);
+  const [backend, setBackend] = useState(null); // "WebGPU" | "CPU"
 
   // selectedClass is read inside the (once-bound) map click handler.
   const selectedClassRef = useRef(selectedClass);
@@ -102,6 +106,17 @@ const InteractiveLabeler = () => {
   useEffect(() => {
     viewModeRef.current = viewMode;
   }, [viewMode]);
+
+  // Detect the compute backend up-front so the panel shows WebGPU vs CPU.
+  useEffect(() => {
+    let alive = true;
+    getGpu().then((gpu) => {
+      if (alive) setBackend(gpu ? "WebGPU" : "CPU");
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -495,8 +510,14 @@ const InteractiveLabeler = () => {
     setCounts(next);
   }
 
-  // ── Train + predict (client-side) ─────────────────────────────────────────
-  function maybeTrainAndPredict() {
+  // ── Train + predict (WebGPU, CPU fallback) ────────────────────────────────
+  // Async (WebGPU is async). A busy guard coalesces rapid label clicks: while a
+  // run is in flight, the latest request is deferred and run once it finishes.
+  async function maybeTrainAndPredict() {
+    if (trainBusyRef.current) {
+      trainPendingRef.current = true;
+      return;
+    }
     const entries = Object.values(labeledMapRef.current).filter((e) =>
       isValidVector(e.features)
     );
@@ -510,32 +531,45 @@ const InteractiveLabeler = () => {
       return;
     }
 
+    trainBusyRef.current = true;
     setStatus("Training…");
-    // Cross-validated precision/recall/F1 for the Damaged class.
-    const cv = crossValidateDamaged(entries, 5, CLASS_DAMAGED);
-    if (cv) setMetrics(cv);
+    try {
+      // Cross-validated precision/recall/F1 for the Damaged class.
+      const cv = await crossValidateDamaged(entries, 5, CLASS_DAMAGED);
+      if (cv) setMetrics(cv);
 
-    const model = buildModel(entries);
+      // Predict for every building with a valid feature vector.
+      const ids = [];
+      const matrix = [];
+      for (const f of featuresRef.current) {
+        const vec = extractFeatureVector(
+          f.properties,
+          featureKeysRef.current
+        );
+        if (!isValidVector(vec)) continue;
+        ids.push(f.properties.id);
+        matrix.push(vec);
+      }
+      if (matrix.length === 0) return;
 
-    // Predict for every building with a valid feature vector.
-    const ids = [];
-    const matrix = [];
-    for (const f of featuresRef.current) {
-      const vec = extractFeatureVector(f.properties, featureKeysRef.current);
-      if (!isValidVector(vec)) continue;
-      ids.push(f.properties.id);
-      matrix.push(vec);
+      const { predictions, backend } = await predictClasses(entries, matrix);
+      const predMap = {};
+      for (let i = 0; i < ids.length; i++) predMap[ids[i]] = predictions[i];
+      predictionsMapRef.current = predMap;
+      setBackend(backend);
+      // One bulk datasource rebuild (instead of N per-shape updates).
+      rebuildDatasource();
+      setPredictedCount(ids.length);
+      setStatus(
+        `Predicted ${ids.length} buildings (${entries.length} labels, ${backend}).`
+      );
+    } finally {
+      trainBusyRef.current = false;
+      if (trainPendingRef.current) {
+        trainPendingRef.current = false;
+        maybeTrainAndPredict();
+      }
     }
-    if (matrix.length === 0) return;
-    const preds = model.predict(matrix);
-    const predMap = {};
-    for (let i = 0; i < ids.length; i++) predMap[ids[i]] = preds[i];
-    predictionsMapRef.current = predMap;
-    // One bulk datasource rebuild (instead of N per-shape updates) — bakes
-    // both the manual labels and the fresh predictions into properties.
-    rebuildDatasource();
-    setPredictedCount(ids.length);
-    setStatus(`Predicted ${ids.length} buildings (${entries.length} labels).`);
   }
 
   // Re-add all features with current _label / _pred baked in. Used after a
@@ -683,9 +717,20 @@ const InteractiveLabeler = () => {
             overflowY: "auto",
           }}
         >
-          <Text variant="large" block style={{ marginBottom: 8 }}>
+          <Text variant="large" block style={{ marginBottom: 2 }}>
             Interactive Labeler
           </Text>
+          {backend && (
+            <div
+              style={{
+                fontSize: 11,
+                color: backend === "WebGPU" ? "#0a7d33" : "#888",
+                marginBottom: 8,
+              }}
+            >
+              Compute: {backend}
+            </div>
+          )}
 
           <ChoiceGroup
             label="Set class"

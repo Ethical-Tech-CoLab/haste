@@ -15,6 +15,8 @@
 //
 // Class encoding (matches index.html): Intact = 0, Damaged = 1, Cloudy = 2.
 
+import { getGpu, gpuBackendName, gpuOvrPredict } from "./gpuLogreg.js";
+
 export const CLASS_INTACT = 0;
 export const CLASS_DAMAGED = 1;
 export const CLASS_CLOUDY = 2;
@@ -160,6 +162,47 @@ export function buildModel(entries) {
   return ovr;
 }
 
+// ── Unified async predict (WebGPU, CPU fallback) ────────────────────────────
+// Trains one-vs-rest logistic regression on `entries` and returns the predicted
+// class for each row of `queryMatrix`. Uses WebGPU when available; otherwise the
+// CPU implementation above. Returns { predictions, backend }.
+export async function predictClasses(
+  entries,
+  queryMatrix,
+  opts = { learningRate: 0.1, numSteps: 500, lambda: 0.01 }
+) {
+  if (queryMatrix.length === 0) {
+    return { predictions: [], backend: gpuBackendName() };
+  }
+  const classes = [...new Set(entries.map((e) => e.label))].sort(
+    (a, b) => a - b
+  );
+
+  const gpu = await getGpu();
+  if (gpu) {
+    try {
+      const predictions = await gpuOvrPredict(
+        gpu,
+        entries,
+        classes,
+        queryMatrix,
+        opts
+      );
+      return { predictions, backend: "WebGPU" };
+    } catch (e) {
+      console.warn("WebGPU predict failed; falling back to CPU.", e);
+    }
+  }
+
+  // CPU fallback — always one-vs-rest (robust to any label set).
+  const ovr = new OvRLogisticRegression(opts);
+  ovr.train(
+    entries.map((e) => e.features),
+    entries.map((e) => e.label)
+  );
+  return { predictions: ovr.predict(queryMatrix), backend: "CPU" };
+}
+
 // ── Feature extraction ──────────────────────────────────────────────────────
 // Detect the f_0..f_N columns once (sorted numerically) and pull them off a
 // feature's properties as a plain number array.
@@ -197,7 +240,7 @@ export function stratifiedSplit(entries, testFrac = 0.25) {
 // Stratified k-fold cross-validation estimate of precision / recall / F1 for
 // the Damaged class (class 1 = positive, everything else = negative). Returns
 // null if there aren't enough labels to form k folds with both classes.
-export function crossValidateDamaged(entries, k = 5, damagedClass = 1) {
+export async function crossValidateDamaged(entries, k = 5, damagedClass = 1) {
   const usable = entries.filter((e) => isValidVector(e.features));
   const pos = usable.filter((e) => e.label === damagedClass);
   const neg = usable.filter((e) => e.label !== damagedClass);
@@ -229,8 +272,10 @@ export function crossValidateDamaged(entries, k = 5, damagedClass = 1) {
     const trainClasses = new Set(train.map((e) => e.label));
     if (trainClasses.size < 2 || test.length === 0) continue;
 
-    const model = buildModel(train);
-    const preds = model.predict(test.map((d) => d.features));
+    const { predictions: preds } = await predictClasses(
+      train,
+      test.map((d) => d.features)
+    );
     test.forEach((e, idx) => {
       const predDamaged = preds[idx] === damagedClass;
       const isDamaged = e.label === damagedClass;
