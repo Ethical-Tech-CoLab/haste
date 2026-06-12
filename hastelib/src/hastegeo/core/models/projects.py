@@ -439,6 +439,18 @@ class Model(BaseModel):
     predictedDamageLayerUrl: Optional[str] = Field(default=None)
     gpkgUrl: Optional[str] = Field(default=None)
     labelsUrl: Optional[str] = Field(default=None)
+    # ── Building labeling workflow (embedding sub-row) ──────────────────
+    # A Model with modelType="embedding" represents a building-embedding
+    # run + interactive-labeling session rather than a trained
+    # segmentation model. It reuses gpkgUrl for the saved per-building
+    # predictions so the existing Validation/Assessment reports work.
+    modelType: Optional[str] = Field(default="trained")
+    embeddingModel: Optional[str] = Field(default=None)
+    resizeFactor: Optional[int] = Field(default=None)
+    numFeatures: Optional[int] = Field(default=None)
+    embeddingJob: Optional[TrainingJob] = Field(default=None)
+    embeddingsGeoJSONUrl: Optional[str] = Field(default=None)
+    pmtilesUrl: Optional[str] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("ImageLayer", "imageLayerId")
     )
@@ -687,6 +699,9 @@ class ImageLayer(BaseModel):
     labelProjectId: Optional[str] = Field(default=None)
     name: Optional[str] = Field(default=None)
     description: Optional[str] = Field(default=None)
+    # "standard" = label/train/infer workflow (default, unchanged).
+    # "building" = building-embedding + interactive-labeling workflow.
+    workflowType: Optional[str] = Field(default="standard")
     format: Optional[str] = Field(default=None)
     sourceType: Optional[str] = Field(default=None)  # Deprecate
     sourceTypePreEvent: Optional[str] = Field(default=None)

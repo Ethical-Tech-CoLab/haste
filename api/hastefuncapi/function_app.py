@@ -7,6 +7,7 @@ import binascii
 import json
 import os
 import re
+import tempfile
 import traceback
 
 import azure.functions as func  # type: ignore
@@ -31,6 +32,7 @@ from hastegeo.core.models.training import CatalogModel
 from hastegeo.core.models.users import User
 from hastegeo.core.models.visualizer import Imagery, Visualizer
 from hastegeo.core.processors.artifacts import ArtifactProcessor
+from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
 from hastegeo.core.processors.metadata import MetadataProcessor
@@ -2116,6 +2118,307 @@ async def PutRunInferenceQueueMessage(
         return func.HttpResponse(
             "Invalid JSON in request body.", status_code=400
         )
+
+
+@app.route(
+    route="PutRunEmbeddingQueueMessage",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutRunEmbeddingQueueMessage(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    """Queue a building-embedding job for the building labeling workflow.
+
+    Creates a Model with ``modelType="embedding"`` (the embedding +
+    interactive-labeling sub-row entity) and enqueues it. Unlike training,
+    embedding needs no labels — only the image layer's cached imagery and
+    building footprints (resolved later by the postprocessor).
+    """
+    logger.info(
+        "PutRunEmbeddingQueueMessage HTTP trigger function processed a "
+        "request."
+    )
+    try:
+        req_body = req.get_json()
+        output = Model(**req_body)
+        output.modelType = "embedding"
+
+        if not output.projectId or not output.imageLayerId:
+            return func.HttpResponse(
+                "projectId and imageLayerId are required.", status_code=400
+            )
+
+        if output.modelId is None:
+            output.modelId = MetadataUtils.generate_short_int_id()
+        if output.creationDate is None:
+            output.creationDate = MetadataUtils.get_timestamp()
+        if output.name:
+            output.name = output.name.replace(" ", "-")
+        # Embedding defaults (a params modal will set these later).
+        output.embeddingModel = output.embeddingModel or "mosaiks"
+        output.resizeFactor = output.resizeFactor or 4
+        output.numFeatures = output.numFeatures or 1024
+
+        output = await asyncio.to_thread(
+            EmbeddingPreprocessor(output).send_to_queue
+        )
+
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=output.projectId,
+            ).save,
+            output.modelId,
+            output.dict(),
+        )
+
+        request = StatsPreProcessor(
+            request=StatsRequest(
+                action="add",
+                projectId=output.projectId,
+                modelIds=[output.modelId],
+            )
+        ).send_to_queue()
+        logger.info(
+            f"Message sent to update stats for project id "
+            f"{output.projectId} with request {request.dict()}"
+        )
+
+        return func.HttpResponse(json.dumps(output.dict()), status_code=200)
+
+    except ValidationError as e:
+        logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
+        return func.HttpResponse("Validation error.", status_code=400)
+    except ValueError as e:
+        logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
+        return func.HttpResponse(
+            "Invalid JSON in request body.", status_code=400
+        )
+
+
+@app.route(
+    route="GetBuildingEmbeddingsGeoJSON",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetBuildingEmbeddingsGeoJSON(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    """Return the full building-embeddings GeoJSON for the interactive labeler.
+
+    Loads the embedding Model's ``embeddingsGeoJSONUrl`` (footprints + f_*
+    feature columns, one row per footprint in row-index order) and streams it
+    back. Unlike GetBuildingFootprintsGeoJSON this does NOT sample — the
+    in-browser model needs every building's full feature vector.
+
+    Query params: projectId, imageLayerId, modelId.
+    """
+    logger.info(
+        "GetBuildingEmbeddingsGeoJSON HTTP trigger function processed a "
+        "request."
+    )
+    tmp_path = None
+    try:
+        project_id = req.params.get("projectId")
+        model_id = req.params.get("modelId")
+        if not project_id or not model_id:
+            return func.HttpResponse(
+                "projectId and modelId are required.", status_code=400
+            )
+
+        model_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            model_id,
+        )
+
+        embeddings_url = model_data.get("embeddingsGeoJSONUrl")
+        if not embeddings_url:
+            return func.HttpResponse(
+                "No embeddings available for this model.", status_code=404
+            )
+
+        tmp_path = await download_blob_to_tempfile(
+            embeddings_url, suffix=".geojson"
+        )
+        with open(tmp_path, "r") as f:
+            geojson_str = await asyncio.to_thread(f.read)
+
+        return func.HttpResponse(
+            geojson_str,
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except FileNotFoundError:
+        return func.HttpResponse("Model not found.", status_code=404)
+    except Exception as e:
+        logger.error(
+            f"Error in GetBuildingEmbeddingsGeoJSON: {e}\n"
+            f"{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error fetching building embeddings.", status_code=500
+        )
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+@app.route(
+    route="PutBuildingPredictions",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutBuildingPredictions(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    """Persist per-building predictions from the interactive labeler.
+
+    The in-browser model predicts ``damaged`` (0/1) for every building. We
+    join those onto the layer's cached building-footprints GeoPackage by row
+    index, write a predictions GeoPackage with the schema the reports expect
+    (``id`` row index, ``damaged``, ``damage_pct_0m``, ``unknown_pct``,
+    ``area``), upload it, and set the embedding Model's ``gpkgUrl`` so the
+    existing Validation/Assessment reports work unchanged.
+
+    Body: { projectId, imageLayerId, modelId,
+            predictions: [ { id, damaged, unknown? }, ... ] }
+    """
+    logger.info(
+        "PutBuildingPredictions HTTP trigger function processed a request."
+    )
+    tmp_fp = None
+    out_gpkg = None
+    try:
+        import geopandas as gpd
+
+        body = req.get_json()
+        project_id = body.get("projectId")
+        image_layer_id = body.get("imageLayerId")
+        model_id = body.get("modelId")
+        predictions = body.get("predictions") or []
+        if not project_id or not image_layer_id or not model_id:
+            return func.HttpResponse(
+                "projectId, imageLayerId and modelId are required.",
+                status_code=400,
+            )
+
+        image_layer_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        if not footprints_url:
+            return func.HttpResponse(
+                "No building footprints available for this image layer.",
+                status_code=404,
+            )
+
+        model_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            model_id,
+        )
+
+        tmp_fp = await download_blob_to_tempfile(
+            footprints_url, suffix=".gpkg"
+        )
+
+        def _build_predictions_gpkg():
+            gdf = gpd.read_file(tmp_fp).reset_index(drop=True)
+            n = len(gdf)
+            damaged = [0] * n
+            unknown = [0.0] * n
+            for p in predictions:
+                try:
+                    idx = int(p.get("id"))
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= idx < n:
+                    damaged[idx] = 1 if int(p.get("damaged", 0)) == 1 else 0
+                    unknown[idx] = float(p.get("unknown", 0.0))
+            out = gdf[["geometry"]].copy()
+            out.insert(0, "id", range(n))
+            out["damaged"] = damaged
+            out["damage_pct_0m"] = [float(d) for d in damaged]
+            out["unknown_pct"] = unknown
+            # Footprint area in m^2 via an equal-area projection.
+            try:
+                out["area"] = gdf.geometry.to_crs(epsg=6933).area
+            except Exception:
+                out["area"] = None
+            fd, path = tempfile.mkstemp(suffix=".gpkg")
+            os.close(fd)
+            out.to_file(path, layer="predictions", driver="GPKG")
+            return path
+
+        out_gpkg = await asyncio.to_thread(_build_predictions_gpkg)
+
+        artifact_name = (
+            config.get_artifact_types().BUILDING_PREDICTIONS_GPKG.value.substitute(
+                modelName=model_id
+            )
+            + ".gpkg"
+        )
+
+        def _store_and_url():
+            ap = ArtifactProcessor(project_id)
+            ap.store_artifact(artifact_name=artifact_name, src_path=out_gpkg)
+            return ap.get_download_url(identifier=artifact_name)
+
+        gpkg_url = await asyncio.to_thread(_store_and_url)
+
+        model_data["gpkgUrl"] = gpkg_url
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).save,
+            model_id,
+            model_data,
+        )
+
+        return func.HttpResponse(
+            json.dumps({"gpkgUrl": gpkg_url, "count": len(predictions)}),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except FileNotFoundError:
+        return func.HttpResponse("Model not found.", status_code=404)
+    except ValueError as e:
+        logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
+        return func.HttpResponse(
+            "Invalid JSON in request body.", status_code=400
+        )
+    except Exception as e:
+        logger.error(
+            f"Error in PutBuildingPredictions: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error saving building predictions.", status_code=500
+        )
+    finally:
+        for _p in (tmp_fp, out_gpkg):
+            if _p and os.path.exists(_p):
+                try:
+                    os.unlink(_p)
+                except OSError:
+                    pass
 
 
 @app.route(

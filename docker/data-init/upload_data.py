@@ -41,7 +41,9 @@ def create_queues():
         "local-stats-queue",
         "local-zip-queue",
         "local-inference-queue",
-        "local-image-queue-poison"
+        "local-embedding-queue",
+        "local-image-queue-poison",
+        "local-embedding-queue-poison"
     ]
     
     success_count = 0
