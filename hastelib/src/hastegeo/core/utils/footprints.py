@@ -20,10 +20,12 @@ from functools import lru_cache
 from typing import List, Optional, Tuple
 
 import fsspec
+import geopandas as gpd
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
 import pyarrow.fs as fs
+from geopandas import GeoDataFrame
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +33,6 @@ OVERTURE_ACCOUNT_NAME = "overturemapswestus2"
 FALLBACK_RELEASE = "2026-02-18.0"
 # Matches Overture release names like "2026-02-18.0"
 _RELEASE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.\d+$")
-
-# Allows for optional import of additional dependencies
-try:
-    import geopandas as gpd
-    from geopandas import GeoDataFrame
-
-    HAS_GEOPANDAS = True
-except ImportError:
-    HAS_GEOPANDAS = False
-    GeoDataFrame = None
 
 
 type_theme_map = {
@@ -115,7 +107,7 @@ def record_batch_reader(
 
 def geodataframe(
     overture_type: str, bbox: Tuple[float, float, float, float] = None
-) -> "GeoDataFrame":
+) -> GeoDataFrame:
     """Loads geoparquet for specified type into a geopandas dataframe.
 
     Args:
@@ -125,9 +117,6 @@ def geodataframe(
     Returns:
         GeoDataFrame with the optionally filtered theme data.
     """
-    if not HAS_GEOPANDAS:
-        raise ImportError("geopandas is required to use this function")
-
     reader = record_batch_reader(overture_type, bbox)
     return gpd.GeoDataFrame.from_arrow(reader)
 
@@ -207,6 +196,7 @@ def download_building_footprints(
     output_path: str,
     *,
     overwrite: bool = False,
+    aoi_polygon=None,
 ) -> int:
     """Download Overture Maps building footprints for an AOI to a GeoPackage.
 
@@ -215,9 +205,17 @@ def download_building_footprints(
     HASTE's downstream merge step expects).
 
     Args:
-        bbox: AOI bounding box (xmin, ymin, xmax, ymax) in EPSG:4326.
+        bbox: AOI bounding box (xmin, ymin, xmax, ymax) in EPSG:4326. The
+            bbox alone is the only filter Overture supports server-side,
+            so this still gates how much data is pulled.
         output_path: Destination ``.gpkg`` filename.
         overwrite: If False and the file already exists, raise FileExistsError.
+        aoi_polygon: Optional shapely geometry in EPSG:4326. If provided,
+            footprints whose geometry does not intersect this polygon are
+            dropped — i.e. the bbox-cornered nodata regions of the
+            post-event mosaic are excluded. Buildings are kept whole
+            (no geometric clipping), only filtered, so a footprint
+            partially inside the AOI still appears in full.
 
     Returns:
         Number of features written.
@@ -238,6 +236,22 @@ def download_building_footprints(
         footprints.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
     ]
     footprints.set_crs(epsg=4326, inplace=True)
+
+    if aoi_polygon is not None:
+        before = int(footprints.shape[0])
+        # Keep buildings that intersect the AOI at all — preserves the
+        # whole footprint for partial-coverage buildings rather than
+        # slicing them, which is what downstream damage assessment wants.
+        footprints = footprints[footprints.intersects(aoi_polygon)]
+        after = int(footprints.shape[0])
+        logger.info(
+            "AOI-polygon filter kept %d of %d bbox-matched footprints "
+            "(dropped %d outside the valid-area mask)",
+            after,
+            before,
+            before - after,
+        )
+
     footprints.to_file(output_path, driver="GPKG")
 
     logger.info(
@@ -276,6 +290,18 @@ def _main():
         action="store_true",
         help="Replace the output file if it already exists",
     )
+    parser.add_argument(
+        "--aoi-geojson",
+        default=None,
+        help=(
+            "Optional path to a GeoJSON file with the valid-area polygon "
+            "(EPSG:4326). Footprints whose geometry does not intersect "
+            "this polygon are dropped, removing buildings from the bbox "
+            "corners that fall outside the imagery's valid-data region. "
+            "Loading failures are logged and AOI filtering is skipped — "
+            "the bbox-only result is still written."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -284,10 +310,35 @@ def _main():
         parser.error(f"--bbox must be 'xmin,ymin,xmax,ymax': {e}")
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    aoi_polygon = None
+    if args.aoi_geojson:
+        try:
+            aoi_gdf = gpd.read_file(args.aoi_geojson)
+            if aoi_gdf.crs is not None and aoi_gdf.crs.to_epsg() != 4326:
+                aoi_gdf = aoi_gdf.to_crs(epsg=4326)
+            aoi_polygon = aoi_gdf.union_all()
+            if aoi_polygon.is_empty:
+                logger.warning(
+                    "AOI geojson %s produced an empty geometry; "
+                    "skipping AOI filter",
+                    args.aoi_geojson,
+                )
+                aoi_polygon = None
+        except Exception:
+            logger.warning(
+                "Failed to load AOI geojson %s; falling back to "
+                "bbox-only filtering",
+                args.aoi_geojson,
+                exc_info=True,
+            )
+            aoi_polygon = None
+
     count = download_building_footprints(
         bbox=(xmin, ymin, xmax, ymax),
         output_path=args.output_path,
         overwrite=args.overwrite,
+        aoi_polygon=aoi_polygon,
     )
     sys.stdout.write(f"{count}\n")
     sys.stdout.flush()
