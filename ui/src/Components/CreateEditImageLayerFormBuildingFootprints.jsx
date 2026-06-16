@@ -46,16 +46,20 @@ const CreateEditImageLayerFormBuildingFootprints = ({
   const [pickedFile, setPickedFile] = useState(null);
 
   // Clear stale state when the toggle is switched off so submitting
-  // doesn't accidentally send a URL the user no longer wants.
+  // doesn't accidentally send a URL the user no longer wants. Uses
+  // the functional setState form so the update always applies to the
+  // latest state — spreading `componentState` captured in the closure
+  // would overwrite newer form edits made between renders.
   useEffect(() => {
     if (!enabled) {
-      if (entries.length > 0 || controlError) {
-        setComponentState({
-          ...componentState,
-          [FIELD]: [],
-          [CONTROL_ERROR]: "",
-        });
-      }
+      setComponentState((prev) => {
+        const existingEntries = prev[FIELD] || [];
+        const existingError = prev[CONTROL_ERROR];
+        if (existingEntries.length === 0 && !existingError) {
+          return prev;
+        }
+        return { ...prev, [FIELD]: [], [CONTROL_ERROR]: "" };
+      });
       setUrlInput("");
       setPickedFile(null);
     }
