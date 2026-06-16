@@ -675,12 +675,14 @@ class ImageryWorkflow:
         max_bytes: int,
         timeout_seconds: int,
     ):
-        """Stream the user-supplied gpkg to ``output_path``.
+        """Download the user-supplied gpkg to ``output_path``.
 
-        Refuses to follow cross-host redirects (so an allowlisted source
-        can't bounce us to an internal host), and bounds the in-memory
-        download at ``max_bytes`` (so a hostile or accidental multi-GB
-        upload can't OOM the imageryprep container).
+        One-shot fetch (no streaming) — the response body is read fully
+        into memory, size-checked against ``max_bytes``, and written
+        atomically. Refuses to follow cross-host redirects (so an
+        allowlisted source can't bounce us to an internal host) and
+        bounds the in-memory load at ``max_bytes`` (so a hostile or
+        accidental multi-GB upload can't OOM the imageryprep container).
         """
         # Single-shot fetch — no streaming. ``allow_redirects=False`` so
         # an allowlisted source can't redirect to an internal host;

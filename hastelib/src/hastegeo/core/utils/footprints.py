@@ -54,6 +54,17 @@ type_theme_map = {
 }
 
 
+# Expected output schema for a building-footprints GeoPackage. Downstream
+# consumers (merge_with_building_footprints, GetBuildingFootprintsGeoJSON,
+# the building-validation UI) tolerate missing ``subtype``/``class`` but
+# always read by column name, so we synthesize a sentinel when the
+# user-supplied input lacks them. Shared between the Overture path
+# (download_building_footprints) and the user-supplied path
+# (clip_and_normalize_user_footprints) so the two produce identical
+# schemas.
+_FOOTPRINT_OUTPUT_COLUMNS = ("id", "geometry", "subtype", "class")
+
+
 def get_all_overture_types() -> List[str]:
     return list(type_theme_map.keys())
 
@@ -231,7 +242,7 @@ def download_building_footprints(
         os.remove(output_path)
 
     footprints = geodataframe("building", bbox)
-    footprints = footprints[["id", "geometry", "subtype", "class"]]
+    footprints = footprints[list(_FOOTPRINT_OUTPUT_COLUMNS)]
     footprints = footprints[
         footprints.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
     ]
@@ -282,14 +293,6 @@ def download_building_footprints(
         output_path,
     )
     return int(footprints.shape[0])
-
-
-# Expected output schema for a building-footprints GeoPackage. Downstream
-# consumers (merge_with_building_footprints, GetBuildingFootprintsGeoJSON,
-# the building-validation UI) tolerate missing ``subtype``/``class`` but
-# always read by column name, so we synthesize a sentinel when the
-# user-supplied input lacks them.
-_FOOTPRINT_OUTPUT_COLUMNS = ("id", "geometry", "subtype", "class")
 
 
 def clip_and_normalize_user_footprints(
@@ -377,16 +380,13 @@ def clip_and_normalize_user_footprints(
         clipped = gpd.clip(gdf, aoi_gdf, keep_geom_type=True)
     except TypeError:  # pragma: no cover - geopandas < 0.10
         clipped = gpd.clip(gdf, aoi_gdf)
-        clipped = clipped[
-            clipped.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
-        ]
-    clipped = clipped[~clipped.geometry.is_empty]
-    # ``gpd.clip`` may turn touching boundary-only intersections into
-    # Point/LineString features even with ``keep_geom_type=True`` if the
-    # input is exotic; re-filter defensively.
+    # gpd.clip can produce Point/LineString slivers from boundary-only
+    # intersections even with keep_geom_type=True on some inputs; same
+    # belt-and-suspenders re-filter the Overture path applies.
     clipped = clipped[
         clipped.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
     ]
+    clipped = clipped[~clipped.geometry.is_empty]
 
     if clipped.empty:
         raise ValueError(
