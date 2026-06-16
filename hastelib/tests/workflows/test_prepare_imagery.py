@@ -486,8 +486,6 @@ class TestProcessUserBuildingFootprintsStep(unittest.TestCase):
             redirect_resp = MM()
             redirect_resp.status_code = 302
             redirect_resp.headers = {"Location": "https://evil.example/x"}
-            redirect_resp.__enter__ = lambda s: s
-            redirect_resp.__exit__ = lambda *a: False
 
             with patch("requests.get", return_value=redirect_resp) as mock_get:
                 with self.assertRaises(RuntimeError) as cm:
@@ -501,7 +499,10 @@ class TestProcessUserBuildingFootprintsStep(unittest.TestCase):
                 kwargs = mock_get.call_args.kwargs
                 self.assertFalse(kwargs.get("allow_redirects", True))
 
-    def test_download_enforces_max_bytes_streamed(self):
+    def test_download_enforces_max_bytes(self):
+        # New single-shot fetch checks len(resp.content) against
+        # max_bytes; supersedes both the chunked-stream cap and the
+        # separate content-length pre-check from the old implementation.
         from unittest.mock import MagicMock as MM
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -510,15 +511,8 @@ class TestProcessUserBuildingFootprintsStep(unittest.TestCase):
 
             resp = MM()
             resp.status_code = 200
-            # No content-length header — must catch on streaming.
-            resp.headers = {}
             resp.raise_for_status = MM(return_value=None)
-            # Stream chunks larger than the cap so we trigger the abort.
-            resp.iter_content = MM(
-                return_value=iter([b"\x00" * 600, b"\x00" * 600])
-            )
-            resp.__enter__ = lambda s: s
-            resp.__exit__ = lambda *a: False
+            resp.content = b"\x00" * 1200  # over the 1000-byte cap below
 
             with patch("requests.get", return_value=resp):
                 with self.assertRaises(RuntimeError) as cm:
@@ -529,31 +523,38 @@ class TestProcessUserBuildingFootprintsStep(unittest.TestCase):
                         timeout_seconds=30,
                     )
                 self.assertIn("max size", str(cm.exception))
+                # File must not have been written when the size check fails
+                self.assertFalse(os.path.exists(output_path))
 
-    def test_download_rejects_content_length_too_large(self):
+    def test_download_writes_file_within_cap(self):
+        # Sanity: a normal in-cap response actually writes the bytes
+        # to disk.
         from unittest.mock import MagicMock as MM
 
         with tempfile.TemporaryDirectory() as tmp:
             wf = self._make_workflow(tmp)
             output_path = os.path.join(tmp, "stage.gpkg")
 
+            payload = b"GPKG-stub-bytes"
             resp = MM()
             resp.status_code = 200
-            resp.headers = {"content-length": str(10_000)}
             resp.raise_for_status = MM(return_value=None)
-            resp.iter_content = MM(return_value=iter([]))
-            resp.__enter__ = lambda s: s
-            resp.__exit__ = lambda *a: False
+            resp.content = payload
 
-            with patch("requests.get", return_value=resp):
-                with self.assertRaises(RuntimeError) as cm:
-                    wf._download_user_footprints_to(
-                        self._GOOD_URL,
-                        output_path,
-                        max_bytes=5_000,
-                        timeout_seconds=30,
-                    )
-                self.assertIn("max size", str(cm.exception))
+            with patch("requests.get", return_value=resp) as mock_get:
+                wf._download_user_footprints_to(
+                    self._GOOD_URL,
+                    output_path,
+                    max_bytes=10_000,
+                    timeout_seconds=30,
+                )
+                # File was written with exactly the response bytes.
+                with open(output_path, "rb") as f:
+                    self.assertEqual(f.read(), payload)
+                # And we called requests.get with the right safety knobs.
+                kwargs = mock_get.call_args.kwargs
+                self.assertFalse(kwargs.get("allow_redirects", True))
+                self.assertEqual(kwargs.get("timeout"), 30)
 
 
 if __name__ == "__main__":

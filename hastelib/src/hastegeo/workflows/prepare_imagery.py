@@ -7,9 +7,11 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from string import Template
 
+import requests
 from hastegeo.core.config import Config
 from hastegeo.core.utils.downloader import ImageryDownloader
 from hastegeo.core.utils.imagery import ImageryUtils
@@ -608,8 +610,6 @@ class ImageryWorkflow:
             os.getenv("HASTE_USER_FOOTPRINTS_TIMEOUT_SECONDS", "300")
         )
 
-        import tempfile
-
         with tempfile.TemporaryDirectory(prefix="user_footprints_") as scratch:
             staged_path = os.path.join(scratch, "user_footprints.gpkg")
             try:
@@ -677,54 +677,31 @@ class ImageryWorkflow:
     ):
         """Stream the user-supplied gpkg to ``output_path``.
 
-        Refuses to write past ``max_bytes`` (so a hostile or accidental
-        multi-GB upload can't OOM the imageryprep container) and refuses
-        to follow cross-host redirects (so an allowlisted source can't
-        bounce us to an internal host).
+        Refuses to follow cross-host redirects (so an allowlisted source
+        can't bounce us to an internal host), and bounds the in-memory
+        download at ``max_bytes`` (so a hostile or accidental multi-GB
+        upload can't OOM the imageryprep container).
         """
-        import requests
-
-        # Disable automatic redirect following so we can re-validate the
-        # final host before streaming bytes.
-        with requests.get(
-            url,
-            stream=True,
-            timeout=timeout_seconds,
-            allow_redirects=False,
-        ) as resp:
-            if resp.status_code in (301, 302, 303, 307, 308):
-                raise RuntimeError(
-                    "Redirects are not followed for user-supplied "
-                    f"building-footprint URLs (got {resp.status_code})."
-                )
-            resp.raise_for_status()
-
-            # Best-effort early-out on advertised size.
-            advertised = resp.headers.get("content-length")
-            if advertised is not None:
-                try:
-                    if int(advertised) > max_bytes:
-                        raise RuntimeError(
-                            f"User-supplied building footprints exceed the "
-                            f"max size of {max_bytes} bytes "
-                            f"(content-length={advertised})."
-                        )
-                except ValueError:
-                    pass
-
-            written = 0
-            with open(output_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=1 << 20):
-                    if not chunk:
-                        continue
-                    written += len(chunk)
-                    if written > max_bytes:
-                        raise RuntimeError(
-                            f"User-supplied building footprints exceed the "
-                            f"max size of {max_bytes} bytes (aborted at "
-                            f"{written} bytes)."
-                        )
-                    f.write(chunk)
+        # Single-shot fetch — no streaming. ``allow_redirects=False`` so
+        # an allowlisted source can't redirect to an internal host;
+        # ``raise_for_status`` to fail loudly on 4xx/5xx; size check
+        # against ``max_bytes`` to bound memory + disk; then atomic write.
+        resp = requests.get(
+            url, timeout=timeout_seconds, allow_redirects=False
+        )
+        if resp.status_code in (301, 302, 303, 307, 308):
+            raise RuntimeError(
+                "Redirects are not followed for user-supplied "
+                f"building-footprint URLs (got {resp.status_code})."
+            )
+        resp.raise_for_status()
+        if len(resp.content) > max_bytes:
+            raise RuntimeError(
+                f"User-supplied building footprints exceed the max size of "
+                f"{max_bytes} bytes (got {len(resp.content)} bytes)."
+            )
+        with open(output_path, "wb") as f:
+            f.write(resp.content)
 
 
 def _download_imagery(urls, dst_directory):
