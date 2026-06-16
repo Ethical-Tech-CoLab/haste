@@ -194,5 +194,133 @@ class TestValidateFootprintUrl(unittest.TestCase):
                 )
 
 
+class _FakeImageLayer:
+    """Minimal stand-in for hastegeo.core.models.projects.ImageLayer.
+
+    Only the attributes the validators actually read are populated;
+    using a real ImageLayer would pull a heavy Pydantic + storage
+    import chain into this test module for no behavioral benefit.
+    """
+
+    def __init__(
+        self,
+        *,
+        preEventImageryUrls=None,
+        postEventImageryUrls=None,
+        userBuildingFootprintsUrl=None,
+    ):
+        self.preEventImageryUrls = preEventImageryUrls
+        self.postEventImageryUrls = postEventImageryUrls
+        self.userBuildingFootprintsUrl = userBuildingFootprintsUrl
+
+
+class TestValidateImageLayerImageryUrls(unittest.TestCase):
+    """Tests for validate_image_layer_imagery_urls (ImageLayer-shaped wrapper)."""
+
+    def test_all_urls_on_allowlist_returns_none(self):
+        from hastegeo.core.utils.url_allowlist import (
+            validate_image_layer_imagery_urls,
+        )
+
+        layer = _FakeImageLayer(
+            preEventImageryUrls=[
+                "https://x.blob.core.windows.net/c/a.tif",
+                "https://y.s3.amazonaws.com/a.tif",
+            ],
+            postEventImageryUrls=[
+                "https://z.blob.core.windows.net/c/b.tif",
+            ],
+        )
+        self.assertIsNone(validate_image_layer_imagery_urls(layer))
+
+    def test_empty_layer_returns_none(self):
+        from hastegeo.core.utils.url_allowlist import (
+            validate_image_layer_imagery_urls,
+        )
+
+        self.assertIsNone(validate_image_layer_imagery_urls(_FakeImageLayer()))
+
+    def test_one_bad_url_reports_rejected_host(self):
+        from hastegeo.core.utils.url_allowlist import (
+            validate_image_layer_imagery_urls,
+        )
+
+        layer = _FakeImageLayer(
+            preEventImageryUrls=[
+                "https://x.blob.core.windows.net/c/ok.tif",
+                "https://evil.example/bad.tif",
+            ],
+        )
+        msg = validate_image_layer_imagery_urls(layer)
+        self.assertIsNotNone(msg)
+        self.assertIn("evil.example", msg)
+        self.assertIn("allowlist", msg.lower())
+        # Other allowlisted URL is not surfaced
+        self.assertNotIn("x.blob.core.windows.net", msg)
+
+    def test_dedupe_rejected_hosts(self):
+        from hastegeo.core.utils.url_allowlist import (
+            validate_image_layer_imagery_urls,
+        )
+
+        layer = _FakeImageLayer(
+            preEventImageryUrls=["https://evil.example/a.tif"],
+            postEventImageryUrls=["https://evil.example/b.tif"],
+        )
+        msg = validate_image_layer_imagery_urls(layer)
+        self.assertEqual(msg.count("evil.example"), 1)
+
+    def test_skips_falsy_urls_in_list(self):
+        from hastegeo.core.utils.url_allowlist import (
+            validate_image_layer_imagery_urls,
+        )
+
+        layer = _FakeImageLayer(
+            preEventImageryUrls=[
+                None,
+                "",
+                "https://x.blob.core.windows.net/c/a.tif",
+            ],
+        )
+        self.assertIsNone(validate_image_layer_imagery_urls(layer))
+
+
+class TestValidateImageLayerUserFootprintsUrl(unittest.TestCase):
+    """Tests for validate_image_layer_user_footprints_url."""
+
+    def test_no_url_returns_none(self):
+        from hastegeo.core.utils.url_allowlist import (
+            validate_image_layer_user_footprints_url,
+        )
+
+        self.assertIsNone(
+            validate_image_layer_user_footprints_url(_FakeImageLayer())
+        )
+
+    def test_allowlisted_url_returns_none(self):
+        from hastegeo.core.utils.url_allowlist import (
+            validate_image_layer_user_footprints_url,
+        )
+
+        layer = _FakeImageLayer(
+            userBuildingFootprintsUrl=(
+                "https://x.blob.core.windows.net/c/footprints.gpkg"
+            )
+        )
+        self.assertIsNone(validate_image_layer_user_footprints_url(layer))
+
+    def test_bad_url_reports_rejected_host(self):
+        from hastegeo.core.utils.url_allowlist import (
+            validate_image_layer_user_footprints_url,
+        )
+
+        layer = _FakeImageLayer(
+            userBuildingFootprintsUrl="https://evil.example/x.gpkg"
+        )
+        msg = validate_image_layer_user_footprints_url(layer)
+        self.assertIsNotNone(msg)
+        self.assertIn("evil.example", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,8 +6,12 @@ Used by both the ImageryDownloader (defense-in-depth at fetch time) and the
 PutLayer API handler (reject bad URLs at submission time, so users get
 immediate feedback instead of failed batch jobs).
 """
+import logging
 import os
+from typing import Optional
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 # Human-readable description used in user-facing error messages. Keep in
 # sync with the JS allowlist in ui/src/util/validation.js.
@@ -142,3 +146,87 @@ def validate_footprint_url(url: str) -> str:
     raise ValueError(
         f"URL host {host!r} is not on the allowlist of permitted building-footprint sources"
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# ImageLayer-level convenience wrappers.
+#
+# These belong here (not in api/hastefuncapi/function_app.py) because they
+# operate on an ImageLayer Pydantic model — not on a func.HttpRequest /
+# HttpResponse — and AGENTS.md reserves function_app.py for top-level
+# HTTP handlers only. PutLayer (and any future endpoint that needs to
+# pre-validate a layer's URLs at submission time) imports from here.
+#
+# The ImageLayer type is referenced as a forward-string annotation to
+# avoid pulling hastegeo.core.models.projects at import time (would create
+# an import cycle: models.projects ← processors.imagery ← utils.url_allowlist).
+# ──────────────────────────────────────────────────────────────────────────
+def validate_image_layer_imagery_urls(image_layer) -> Optional[str]:
+    """Validate the imagery URLs on an ImageLayer against the allowlist.
+
+    Returns a user-facing error message if any URL is not on the
+    allowlist, or ``None`` if all URLs validate. Full URLs are logged
+    server-side via the module logger; only rejected hostnames are
+    surfaced to the caller for use in HTTP responses.
+
+    Args:
+        image_layer: An ``ImageLayer`` Pydantic instance whose
+            ``preEventImageryUrls`` / ``postEventImageryUrls`` to check.
+    """
+    rejected_hosts: list[str] = []
+    for field_name in ("preEventImageryUrls", "postEventImageryUrls"):
+        urls = getattr(image_layer, field_name, None) or []
+        for idx, url in enumerate(urls):
+            if not url:
+                continue
+            try:
+                validate_imagery_url(url)
+            except ValueError:
+                host = urlparse(url).hostname or "<unparseable>"
+                logger.warning(
+                    "Rejected imagery URL not on allowlist: "
+                    "field=%s index=%d host=%s",
+                    field_name,
+                    idx,
+                    host,
+                )
+                rejected_hosts.append(host)
+    if rejected_hosts:
+        unique_hosts = sorted(set(rejected_hosts))
+        return (
+            "One or more imagery URLs are not on the allowlist of permitted "
+            f"hosts ({ALLOWED_HOST_DESCRIPTION}). "
+            f"Rejected host(s): {', '.join(unique_hosts)}."
+        )
+    return None
+
+
+def validate_image_layer_user_footprints_url(image_layer) -> Optional[str]:
+    """Validate the optional user-supplied building-footprint URL.
+
+    Returns a user-facing error message if the URL is set but not on the
+    footprint allowlist, or ``None`` otherwise. As with imagery URLs,
+    the full URL is logged server-side and only the rejected hostname is
+    surfaced to the caller.
+
+    Args:
+        image_layer: An ``ImageLayer`` Pydantic instance whose
+            ``userBuildingFootprintsUrl`` to check.
+    """
+    url = getattr(image_layer, "userBuildingFootprintsUrl", None)
+    if not url:
+        return None
+    try:
+        validate_footprint_url(url)
+    except ValueError:
+        host = urlparse(url).hostname or "<unparseable>"
+        logger.warning(
+            "Rejected userBuildingFootprintsUrl not on allowlist: host=%s",
+            host,
+        )
+        return (
+            "The user-supplied building-footprints URL is not on the "
+            f"allowlist of permitted hosts ({FOOTPRINT_ALLOWED_HOST_DESCRIPTION}). "
+            f"Rejected host: {host}."
+        )
+    return None

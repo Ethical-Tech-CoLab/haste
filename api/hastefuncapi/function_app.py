@@ -8,7 +8,6 @@ import json
 import os
 import re
 import traceback
-from urllib.parse import urlparse
 
 import azure.functions as func  # type: ignore
 import requests  # type: ignore
@@ -43,10 +42,8 @@ from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.url_allowlist import (
-    ALLOWED_HOST_DESCRIPTION,
-    FOOTPRINT_ALLOWED_HOST_DESCRIPTION,
-    validate_footprint_url,
-    validate_imagery_url,
+    validate_image_layer_imagery_urls,
+    validate_image_layer_user_footprints_url,
 )
 from hastegeo.core.utils.user import InvitationManager, UserManager
 from pydantic import ValidationError  # type: ignore
@@ -123,68 +120,6 @@ def _require_email_param(req: func.HttpRequest, name: str) -> str:
 def _bad_request(name_or_message: str) -> func.HttpResponse:
     logger.warning(f"Rejected request: {name_or_message}")
     return func.HttpResponse("Invalid request parameters.", status_code=400)
-
-
-def _validate_imagery_urls(image_data: ImageLayer) -> str | None:
-    """Validate user-submitted imagery URLs against the host allowlist.
-
-    Returns a user-facing error message if any URL is not on the allowlist,
-    or None if all URLs validate. Full URLs are logged server-side; only
-    rejected hostnames are surfaced to the client.
-    """
-    rejected_hosts: list[str] = []
-    for field_name in ("preEventImageryUrls", "postEventImageryUrls"):
-        urls = getattr(image_data, field_name, None) or []
-        for idx, url in enumerate(urls):
-            if not url:
-                continue
-            try:
-                validate_imagery_url(url)
-            except ValueError:
-                host = urlparse(url).hostname or "<unparseable>"
-                logger.warning(
-                    f"PutLayer rejected URL not on allowlist: "
-                    f"field={field_name} index={idx} host={host}"
-                )
-                rejected_hosts.append(host)
-    if rejected_hosts:
-        unique_hosts = sorted(set(rejected_hosts))
-        return (
-            "One or more imagery URLs are not on the allowlist of permitted "
-            f"hosts ({ALLOWED_HOST_DESCRIPTION}). "
-            f"Rejected host(s): {', '.join(unique_hosts)}."
-        )
-    return None
-
-
-def _validate_user_building_footprints_url(
-    image_data: ImageLayer,
-) -> str | None:
-    """Validate the optional user-supplied building-footprint URL.
-
-    Returns a user-facing error message if the URL is set but not on the
-    footprint allowlist, or None otherwise. As with imagery URLs, the
-    full URL is logged server-side and only the rejected hostname is
-    surfaced to the client. The footprint allowlist matches the imagery
-    one plus the configured local upload host.
-    """
-    url = getattr(image_data, "userBuildingFootprintsUrl", None)
-    if not url:
-        return None
-    try:
-        validate_footprint_url(url)
-    except ValueError:
-        host = urlparse(url).hostname or "<unparseable>"
-        logger.warning(
-            "PutLayer rejected userBuildingFootprintsUrl not on allowlist: "
-            f"host={host}"
-        )
-        return (
-            "The user-supplied building-footprints URL is not on the "
-            f"allowlist of permitted hosts ({FOOTPRINT_ALLOWED_HOST_DESCRIPTION}). "
-            f"Rejected host: {host}."
-        )
-    return None
 
 
 def _decode_client_principal(req: func.HttpRequest) -> dict | None:
@@ -868,11 +803,11 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
         req_body = req.get_json()
         image_data = ImageLayer(**req_body)
 
-        url_error = _validate_imagery_urls(image_data)
+        url_error = validate_image_layer_imagery_urls(image_data)
         if url_error:
             return func.HttpResponse(url_error, status_code=400)
 
-        footprint_url_error = _validate_user_building_footprints_url(
+        footprint_url_error = validate_image_layer_user_footprints_url(
             image_data
         )
         if footprint_url_error:
