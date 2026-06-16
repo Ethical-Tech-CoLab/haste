@@ -23,9 +23,11 @@ ALLOWED_HOST_DESCRIPTION = (
 # Building-footprint URLs additionally permit the host of the configured
 # local upload endpoint (read from ``BLOB_ACCOUNT_URL``) so the URLs
 # returned by the chunked file uploader work end-to-end in local dev.
-# When ``BLOB_ACCOUNT_URL`` is unset, local hosts are rejected by default;
-# operators may opt in to allow the conventional Azurite hosts via
-# ``HASTE_ALLOW_LOCAL_FOOTPRINT_HOSTS=1``.
+# When ``BLOB_ACCOUNT_URL`` is unset, local hosts (azurite/localhost/
+# 127.0.0.1) are rejected by default — operators must explicitly opt in
+# via ``HASTE_ALLOW_LOCAL_FOOTPRINT_HOSTS=1`` to allow them. This is a
+# deliberate SSRF guard: a misconfigured production deployment must not
+# silently accept loopback URLs that the workflow then fetches.
 FOOTPRINT_ALLOWED_HOST_DESCRIPTION = (
     f"{ALLOWED_HOST_DESCRIPTION} or the configured local upload host"
 )
