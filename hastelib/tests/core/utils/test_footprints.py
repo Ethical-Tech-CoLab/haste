@@ -266,12 +266,13 @@ class TestDownloadBuildingFootprints(unittest.TestCase):
             self.assertEqual(set(written["id"]), {"in-1", "in-2"})
 
     @patch("hastegeo.core.utils.footprints.geodataframe")
-    def test_aoi_polygon_keeps_partially_overlapping_buildings(
+    def test_aoi_polygon_clips_straddling_buildings_at_boundary(
         self, mock_geodataframe
     ):
-        """A footprint straddling the AOI boundary is kept whole — we
-        intersect-test rather than geometrically clip, since a sliced
-        building is meaningless for downstream damage scoring."""
+        """A footprint straddling the AOI boundary is geometrically
+        clipped at the edge (sliced), matching the
+        clip_and_normalize_user_footprints semantics so both paths
+        produce structurally-equivalent GPKGs."""
         import os
         import tempfile
 
@@ -301,11 +302,9 @@ class TestDownloadBuildingFootprints(unittest.TestCase):
             )
             self.assertEqual(count, 1)
             written = gpd.read_file(output)
-            # Geometry was preserved (not clipped to AOI).
-            self.assertEqual(
-                list(written.geometry.iloc[0].bounds),
-                [4.0, 4.0, 6.0, 6.0],
-            )
+            # Geometry was sliced at the AOI boundary x=5.
+            bounds = list(written.geometry.iloc[0].bounds)
+            self.assertEqual(bounds, [4.0, 4.0, 5.0, 6.0])
 
 
 class TestClipAndNormalizeUserFootprints(unittest.TestCase):

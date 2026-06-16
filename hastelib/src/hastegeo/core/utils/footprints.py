@@ -211,11 +211,11 @@ def download_building_footprints(
         output_path: Destination ``.gpkg`` filename.
         overwrite: If False and the file already exists, raise FileExistsError.
         aoi_polygon: Optional shapely geometry in EPSG:4326. If provided,
-            footprints whose geometry does not intersect this polygon are
-            dropped — i.e. the bbox-cornered nodata regions of the
-            post-event mosaic are excluded. Buildings are kept whole
-            (no geometric clipping), only filtered, so a footprint
-            partially inside the AOI still appears in full.
+            footprints are geometrically clipped to the polygon: anything
+            fully outside is dropped, and footprints that straddle the
+            AOI boundary are sliced at the edge. This matches the
+            user-supplied-footprints path (``clip_and_normalize_user_footprints``)
+            so the two routes produce structurally-equivalent GPKGs.
 
     Returns:
         Number of features written.
@@ -239,13 +239,35 @@ def download_building_footprints(
 
     if aoi_polygon is not None:
         before = int(footprints.shape[0])
-        # Keep buildings that intersect the AOI at all — preserves the
-        # whole footprint for partial-coverage buildings rather than
-        # slicing them, which is what downstream damage assessment wants.
-        footprints = footprints[footprints.intersects(aoi_polygon)]
+        # Geometrically clip footprints to the AOI polygon. Matches
+        # clip_and_normalize_user_footprints — the two paths must
+        # produce structurally-equivalent GPKGs so downstream merge /
+        # validation / assessment code can treat them interchangeably.
+        # Repair invalid geometries before clip so gpd.clip doesn't
+        # drop them or raise; ``make_valid`` is preferred (shapely 2.x
+        # native), ``buffer(0)`` is the legacy fallback.
+        try:
+            footprints["geometry"] = footprints.geometry.make_valid()
+        except AttributeError:  # pragma: no cover - shapely < 2.0
+            footprints["geometry"] = footprints.geometry.buffer(0)
+
+        import geopandas as _gpd
+
+        aoi_gdf = _gpd.GeoDataFrame(geometry=[aoi_polygon], crs="EPSG:4326")
+        try:
+            footprints = _gpd.clip(footprints, aoi_gdf, keep_geom_type=True)
+        except TypeError:  # pragma: no cover - geopandas < 0.10
+            footprints = _gpd.clip(footprints, aoi_gdf)
+        # gpd.clip can produce Point/LineString slivers from
+        # boundary-only intersections even with keep_geom_type=True
+        # on some inputs; re-filter defensively.
+        footprints = footprints[
+            footprints.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
+        ]
+        footprints = footprints[~footprints.geometry.is_empty]
         after = int(footprints.shape[0])
         logger.info(
-            "AOI-polygon filter kept %d of %d bbox-matched footprints "
+            "AOI-polygon clip kept %d of %d bbox-matched footprints "
             "(dropped %d outside the valid-area mask)",
             after,
             before,
