@@ -18,10 +18,10 @@ ALLOWED_HOST_DESCRIPTION = (
 
 # Building-footprint URLs additionally permit the host of the configured
 # local upload endpoint (read from ``BLOB_ACCOUNT_URL``) so the URLs
-# returned by the chunked file uploader work end-to-end in local dev. The
-# helper falls back to allowing the conventional Azurite hosts when the
-# env var is missing (no-op in production where the imagery allowlist
-# already covers ``*.blob.core.windows.net``).
+# returned by the chunked file uploader work end-to-end in local dev.
+# When ``BLOB_ACCOUNT_URL`` is unset, local hosts are rejected by default;
+# operators may opt in to allow the conventional Azurite hosts via
+# ``HASTE_ALLOW_LOCAL_FOOTPRINT_HOSTS=1``.
 FOOTPRINT_ALLOWED_HOST_DESCRIPTION = (
     f"{ALLOWED_HOST_DESCRIPTION} or the configured local upload host"
 )
