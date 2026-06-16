@@ -495,6 +495,13 @@ class ImageryWorkflow:
         Re-validates the URL via :func:`validate_footprint_url` before
         download (defense-in-depth against config rewrites that bypass
         the API allowlist check).
+
+        Also persists the AOI polygon as the valid-area mask GeoJSON
+        (``self.valid_area_mask_path``), mirroring
+        :meth:`download_building_footprints`. Without this, layers
+        processed via the user-supplied path would have no
+        ``validAreaMaskUrl`` and the UI's "Download Valid Area Mask"
+        menu would be greyed out.
         """
         if not self.mosaic_post_event_tif_filepath or not os.path.exists(
             self.mosaic_post_event_tif_filepath
@@ -506,6 +513,11 @@ class ImageryWorkflow:
             logger.error(msg)
             self.building_footprints_path = ""
             self.building_footprints_error = msg
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Cannot extract valid-area mask: post-event mosaic is "
+                "not available."
+            )
             return
 
         try:
@@ -529,7 +541,10 @@ class ImageryWorkflow:
             return
 
         try:
-            from hastegeo.core.utils.aoi import extract_aoi_polygon
+            from hastegeo.core.utils.aoi import (
+                extract_aoi_polygon,
+                save_polygon_as_geojson,
+            )
 
             aoi_polygon = extract_aoi_polygon(
                 self.mosaic_post_event_tif_filepath
@@ -546,7 +561,37 @@ class ImageryWorkflow:
                 "mosaic before processing custom building footprints: "
                 f"{exc}"
             )
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Failed to extract area-of-interest polygon from the "
+                f"post-event mosaic: {exc}"
+            )
             return
+
+        # Persist the AOI polygon as the downloadable valid-area mask
+        # before the user-footprint download/clip runs, so the mask is
+        # captured even if those later steps fail. Mirrors the same
+        # save-then-process ordering used by download_building_footprints
+        # (the Overture path). Failures here are soft — recorded on
+        # valid_area_mask_error rather than aborting the footprint step.
+        mask_prefix = self.generate_prefix(VALID_AREA_MASK_PREFIX)
+        mask_output_path = os.path.join(
+            self.dst_directory, f"{mask_prefix}.geojson"
+        )
+        try:
+            save_polygon_as_geojson(aoi_polygon, mask_output_path)
+            self.valid_area_mask_path = mask_output_path
+            self.valid_area_mask_error = ""
+        except Exception as exc:
+            logger.error(
+                "Failed writing valid-area mask GeoJSON for image layer %s",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Failed to save valid-area-mask GeoJSON: " f"{exc}"
+            )
 
         prefix = self.generate_prefix(BUILDING_FOOTPRINTS_PREFIX)
         output_path = os.path.join(self.dst_directory, f"{prefix}.gpkg")

@@ -337,6 +337,80 @@ class TestProcessUserBuildingFootprintsStep(unittest.TestCase):
             wf.process_user_building_footprints()
             self.assertEqual(wf.building_footprints_path, "")
             self.assertIn("post-event mosaic", wf.building_footprints_error)
+            # Mask should mirror the same failure so the UI surfaces it.
+            self.assertEqual(wf.valid_area_mask_path, "")
+            self.assertIn("post-event mosaic", wf.valid_area_mask_error)
+
+    @patch(
+        "hastegeo.workflows.prepare_imagery.ImageryWorkflow."
+        "_download_user_footprints_to"
+    )
+    @patch("hastegeo.core.utils.aoi.extract_aoi_polygon")
+    @patch("hastegeo.core.utils.footprints.clip_and_normalize_user_footprints")
+    @patch("hastegeo.core.utils.url_allowlist.validate_footprint_url")
+    def test_writes_valid_area_mask_geojson(
+        self, mock_validate, mock_clip, mock_aoi, mock_download
+    ):
+        # User-footprints path must persist the AOI polygon as the
+        # valid-area mask, same as the Overture path. Without this the
+        # UI's "Download Valid Area Mask" stays greyed out whenever a
+        # custom footprints URL is used.
+        polygon = shapely.geometry.Polygon(
+            [(-1.0, 0.0), (1.0, 0.0), (1.0, 1.0), (-1.0, 1.0)]
+        )
+        mock_aoi.return_value = polygon
+        mock_clip.return_value = 5
+
+        def fake_download(url, output_path, **_):
+            with open(output_path, "wb") as f:
+                f.write(b"GPKG-stub")
+
+        mock_download.side_effect = fake_download
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            expected_mask = os.path.join(
+                tmp, "valid_area_mask_proj-1_layer-9.geojson"
+            )
+            wf.process_user_building_footprints()
+
+            self.assertEqual(wf.valid_area_mask_path, expected_mask)
+            self.assertEqual(wf.valid_area_mask_error, "")
+            self.assertTrue(os.path.exists(expected_mask))
+            with open(expected_mask) as f:
+                fc = json.load(f)
+            self.assertEqual(fc["type"], "FeatureCollection")
+            self.assertEqual(len(fc["features"]), 1)
+            self.assertEqual(fc["features"][0]["geometry"]["type"], "Polygon")
+
+    @patch(
+        "hastegeo.workflows.prepare_imagery.ImageryWorkflow."
+        "_download_user_footprints_to"
+    )
+    @patch("hastegeo.core.utils.aoi.extract_aoi_polygon")
+    @patch("hastegeo.core.utils.url_allowlist.validate_footprint_url")
+    def test_mask_survives_user_footprint_download_failure(
+        self, mock_validate, mock_aoi, mock_download
+    ):
+        # Mask is written *before* the user-footprint download is
+        # attempted, so a download failure should still leave the mask
+        # in place — same invariant as the Overture path.
+        polygon = shapely.geometry.Polygon(
+            [(-1.0, 0.0), (1.0, 0.0), (1.0, 1.0), (-1.0, 1.0)]
+        )
+        mock_aoi.return_value = polygon
+        mock_download.side_effect = RuntimeError("HTTP 500")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            wf.process_user_building_footprints()
+
+            # Footprints failed but mask survived
+            self.assertEqual(wf.building_footprints_path, "")
+            self.assertIn("download", wf.building_footprints_error.lower())
+            self.assertTrue(wf.valid_area_mask_path)
+            self.assertTrue(os.path.exists(wf.valid_area_mask_path))
+            self.assertEqual(wf.valid_area_mask_error, "")
 
     @patch("hastegeo.core.utils.aoi.extract_aoi_polygon")
     @patch("hastegeo.core.utils.url_allowlist.validate_footprint_url")
@@ -347,6 +421,10 @@ class TestProcessUserBuildingFootprintsStep(unittest.TestCase):
             wf.process_user_building_footprints()
             self.assertEqual(wf.building_footprints_path, "")
             self.assertIn("area-of-interest", wf.building_footprints_error)
+            # AOI failure should also bubble into the mask error so the
+            # UI can surface a clear cause for the missing mask.
+            self.assertEqual(wf.valid_area_mask_path, "")
+            self.assertIn("area-of-interest", wf.valid_area_mask_error)
 
     @patch(
         "hastegeo.workflows.prepare_imagery.ImageryWorkflow."
