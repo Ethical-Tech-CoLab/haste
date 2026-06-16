@@ -3376,10 +3376,14 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         gpkg_path = await download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
 
         try:
-            # Build index → overture_id from the building footprints file
+            # Build index → overture_id from the building footprints file.
+            # Cast to str so the eventual lookup against labels_dict (which
+            # always has string keys, since JSON object keys are strings)
+            # matches even if the footprints file's id column is integer
+            # typed (common for user-supplied GPKGs).
             with fiona.open(footprints_path) as src_fp:
                 idx_to_overture = {
-                    i: feat["properties"]["id"]
+                    i: str(feat["properties"]["id"])
                     for i, feat in enumerate(src_fp)
                 }
 

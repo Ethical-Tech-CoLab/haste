@@ -374,9 +374,22 @@ def clip_and_normalize_user_footprints(
     # Synthesize ``id`` from row index when missing; preserve any
     # existing values otherwise. Missing ``subtype``/``class`` are left
     # as ``None`` (downstream readers gate on column presence).
+    #
+    # The ``id`` column is force-cast to *string* even when the input
+    # already provided it. The Overture path produces string GUIDs;
+    # downstream consumers (the validation UI, then the validation /
+    # assessment reports that join labels to inference) key on the
+    # JSON-serialized id, which for an integer column comes through as
+    # a JS number → stringly-coerced object key on PUT → str on the
+    # server. Meanwhile this gpkg's fiona-read id stays int. That mix
+    # caused 'No validation labels could be matched to inference
+    # results' for every user GPKG with int ids (which is most GIS
+    # data). Normalizing here makes the two paths interchangeable.
     if "id" not in clipped.columns:
         clipped = clipped.reset_index(drop=True)
         clipped["id"] = clipped.index.astype(str)
+    else:
+        clipped["id"] = clipped["id"].astype(str)
     if "subtype" not in clipped.columns:
         clipped["subtype"] = None
     if "class" not in clipped.columns:

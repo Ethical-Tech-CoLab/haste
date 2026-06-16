@@ -444,6 +444,62 @@ class TestClipAndNormalizeUserFootprints(unittest.TestCase):
             self.assertTrue(out["subtype"].isna().all())
             self.assertTrue(out["class"].isna().all())
 
+    def test_normalizes_int_ids_to_string(self):
+        """User GPKGs with integer id columns (common in GIS data) must
+        be cast to string on write. Without this the downstream join
+        in GetValidationReport / GetAssessmentReport fails universally:
+        labels_dict has string keys (JSON object keys are always
+        strings on the wire), but a fiona-read int-id GPKG produces
+        an int-keyed lookup table → matched == 0 even when labels are
+        in the inference set."""
+        import os
+        import tempfile
+
+        import fiona
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        # User-supplied GPKG with integer building IDs
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": [101, 202, 303],
+                "geometry": [
+                    shapely.geometry.box(1, 1, 2, 2),
+                    shapely.geometry.box(3, 3, 4, 4),
+                    shapely.geometry.box(5, 5, 6, 6),
+                ],
+                "subtype": [None] * 3,
+                "class": [None] * 3,
+            },
+            crs="EPSG:4326",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = self._write_input(tmp, gdf)
+            output_path = os.path.join(tmp, "out.gpkg")
+            count = clip_and_normalize_user_footprints(
+                input_path, self._aoi(), output_path
+            )
+            self.assertEqual(count, 3)
+
+            # Values preserved
+            out = gpd.read_file(output_path)
+            self.assertEqual(sorted(out["id"].tolist()), ["101", "202", "303"])
+
+            # Critical: the on-disk type is string, so fiona reads it
+            # back as string — matches what the JSON object-key path
+            # used by the validation labels produces.
+            with fiona.open(output_path) as src:
+                ids = [feat["properties"]["id"] for feat in src]
+            self.assertTrue(
+                all(isinstance(v, str) for v in ids),
+                f"Expected all str ids, got types: "
+                f"{[type(v).__name__ for v in ids]}",
+            )
+
     def test_drops_non_polygon_features(self):
         import os
         import tempfile
