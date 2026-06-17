@@ -48,7 +48,7 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 | Method | Route | Description |
 |--------|-------|-------------|
 | PUT | `PutRunModelQueueMessage` | Queue a model training run. |
-| PUT | `PutCancelModelQueueMessage` | Cancel a queued or running model training job. |
+| PUT | `PutCancelModelQueueMessage` | Cancel a queued or running training **or inference** job for a model. |
 | PUT | `PutRunInferenceQueueMessage` | Queue an inference run. |
 | DELETE | `DeleteModel` | Delete a model. Requires `projectId` and `modelId`. |
 | GET | `GetVisualizerResults` | Visualizer data with imagery layers and TiTiler tile URLs with colormaps. Requires `projectId`, `imageLayerId`, and `modelId`. |
