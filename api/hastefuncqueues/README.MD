@@ -70,7 +70,7 @@ Orchestrates ML model training. On each invocation:
 - **IN_PROGRESS** → parses TensorBoard event files from the task working directory to extract per-epoch metrics (completed epochs, time per epoch, ETA), then re-queues
 - **COMPLETED** → extracts final metrics; if `autoRunInference` is set, automatically enqueues an inference job
 - **CANCELLED** → calls `TrainPostprocessor.cancel()` which terminates the Batch task
-- **Post-run (separate error scope)** → queues artifact zipping regardless of success/failure, as long as an output path exists
+- **Post-run (separate error scope)** → queues artifact zipping for **FAILED/CANCELLED** training runs when `trainingOutputPath` exists (completed runs can be zipped on-demand via `PutArtifactsZipQueueMessage`)
 
 ---
 
