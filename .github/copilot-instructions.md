@@ -1,159 +1,183 @@
-# Agent instructions for microsoft/haste
+# HASTE — Repository-Wide Copilot Instructions
+#
+# These instructions are automatically loaded into EVERY Copilot session
+# (VS Code, Copilot CLI, Cloud Agent, Code Review).
+# Keep them concise and universally applicable.
 
-This file is read by AI coding agents (GitHub Copilot, Claude, Cursor,
-Codex, etc.) when working in this repository. It collects the small set
-of project-specific conventions that aren't obvious from the source
-itself.
+## Project Overview
 
-> **Mirrored at `.github/copilot-instructions.md`.** GitHub Copilot's
-> chat reads that file directly; other tools read this one. Keep them
-> in sync — they should be identical.
+- **Name**: HASTE (High-speed Assessment and Satellite Tracking for Emergencies)
+- **Description**: AI-driven framework for rapid disaster assessment using satellite and remote sensing data
+- **Primary Languages**: Python 3.11 (backend/core), JavaScript/React (UI)
+- **Package Managers**: pip/conda (Python), npm (UI)
+- **Owner**: microsoft/haste
 
----
-
-## Code organization
-
-### `function_app.py` is for HTTP endpoints only
-
-`api/hastefuncapi/function_app.py` (and its sibling
-`api/hastefuncqueues/function_app.py`) should contain **only top-level
-`@app.route(...)` handlers** — the thin async wrappers that decode the
-`func.HttpRequest`, call into business logic, and serialize a
-`func.HttpResponse`.
-
-Helpers, utilities, parsers, validators, computations, math, blob
-plumbing — everything else — lives under
-`hastelib/src/hastegeo/core/`. The function-app module imports them.
-
-Rationale: keeping HTTP wrappers separate from logic lets the same code
-be reached from unit tests, the CLI scripts in `validation/` and
-`docker/training/code/`, and any future non-HTTP entrypoint. It also
-keeps `function_app.py` from growing without bound — it's already over
-3,600 lines.
-
-A quick heuristic for new code:
-
-- If you'd want to call it from a test without setting up a `HttpRequest`
-  mock, it doesn't belong in `function_app.py`.
-- If two endpoints would call it, it definitely doesn't.
-
-The few helpers that **do** legitimately live in `function_app.py` are
-ones that operate on `func.HttpRequest` / `func.HttpResponse` directly
-(e.g. `_require_guid_param`, `_bad_request`, `_decode_client_principal`).
-Anything that operates on plain data goes in `hastegeo`.
-
-### Where things live in `hastegeo`
-
-- `hastegeo.core.utils.*` — small leaf utilities (one module per
-  concern). Examples: `blob`, `aoi`, `footprints`, `data`, `metadata`,
-  `assessment`.
-- `hastegeo.core.processors.*` — orchestration over the above (one per
-  domain object: artifacts, imagery, inference, train, stats,
-  metadata).
-- `hastegeo.core.runners.*` — code that spawns and supervises Docker /
-  Azure-Batch jobs.
-- `hastegeo.core.models.*` — Pydantic schemas shared by API and storage.
-- `hastegeo.workflows.*` — long-running scripted pipelines run inside
-  the imageryprep / training containers.
-
-### Tests live next to each module
-
-`hastelib/tests/core/utils/test_<name>.py` and so on. Use `unittest`
-style (subclass `unittest.TestCase`) — that's the dominant pattern in
-the existing test files. `pytest` also runs both styles, so either
-works in practice, but match the file you're nearest.
-
-Run a single test file without setting up the conda env:
-
-```bash
-PYTHONPATH=$PWD/hastelib/src python -m unittest \
-  hastelib.tests.core.utils.test_<name> -v
-```
-
-Run the full conda-backed suite:
-
-```bash
-cd hastelib && hatch run test:pytest
-```
-
----
-
-## Repository-wide patterns
-
-### Package naming
-
-The directory is `hastelib/` but the Python package is `hastegeo`. Old
-docs and code may still say `haste`, `haste_geo`, or `hasteutils` —
-those are stale leftovers from earlier renames. Always import as
-`from hastegeo.core...`. Search for the older names with `grep` before
-assuming.
-
-### Pre-commit
-
-Run `pre-commit install` once. Hooks (`.pre-commit-config.yaml`):
-`black` and `isort` (both line-length 79), `flake8` (max-line=79,
-ignoring E202/E203/E221/E231/E501/E713/W503), and `detect-secrets`.
-**flake8 is blocking** — fix any `F401`/`F841` warnings in files you
-touch even if they pre-date your change, otherwise the hook won't let
-the commit through.
-
-### Commit messages
-
-Conventional-commit prefix (`feat`, `fix`, `refactor`, `style`,
-`chore`, `docs`) with optional scope. Descriptive bodies are the norm;
-reviewers expect them. Every commit ends with:
+## Architecture
 
 ```
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+React UI (Vite + FluentUI + Azure Maps + MSAL)
+  └─ Azure Static Web Apps / SWA CLI
+       ├─ hastefuncapi (28 HTTP routes, Azure Functions, Python)
+       ├─ titilerfuncapi (TiTiler/FastAPI, COG tile serving)
+       └─ hastefuncqueues (6 queue triggers, Azure Functions, Python)
+            └─ hastegeo core library (hastelib/)
+                 ├─ Config · Models · Processors · Data Layers
+                 ├─ Runners (Azure Batch GPU) · Utils · Workflows
+                 └─ Storage: Blob, Cosmos DB, Data Lake, PostgreSQL
 ```
 
-### Docker compose dev stack
+## Build & Test
 
-`docker compose -f docker/docker-compose.yml ...`. The persistent
-services are `azurite`, `api-proxy`, `hastefuncapi`, `hastefuncqueues`,
-`titiler`, `ui`. `data-init`, `imageryprep_image`, and `training_image`
-are one-shot side-cars that exit after they run.
+- **Core library build**: `cd hastelib && hatch build -t wheel`
+- **Core library tests (Docker, preferred)**: `docker build -f hastelib/Dockerfile.test -t haste-test .` then `docker run --rm haste-test`
+- **Core library tests (specific file)**: `docker run --rm haste-test tests/path/to/test_file.py -v`
+- **Core library tests (hatch, alternative)**: `cd hastelib && hatch run test:pytest`
+- **UI build**: `cd ui && npm run build`
+- **UI lint**: `cd ui && npm run lint`
+- **API local run**: `cd api/hastefuncapi && func host start`
+- **UI local run**: `cd ui && swa start --app-devserver-url http://localhost:5173 --run 'npm run dev'`
 
-Three traps worth knowing:
+Always run tests before marking a task as complete.
+Always run lint before committing changes.
 
-1. `data-init` re-uploads `project_stats.json` with empty defaults on
-   every `compose up`. Use `--no-deps` when recreating a single
-   service: `compose up -d --no-deps --force-recreate hastefuncapi`.
-   If you already wiped the stats, regenerate with
-   `curl http://localhost:7071/api/GenerateProjectStats`.
-2. `api-proxy` (nginx) caches the `hastefuncapi` upstream IP at
-   startup. After recreating hastefuncapi, also
-   `compose restart api-proxy`, otherwise `/api/*` returns 404.
-3. The docker socket GID inside `hastefuncqueues` must match the host.
-   `stat -c %g /var/run/docker.sock` to find the right value, then
-   `echo DOCKER_GID=<n> >> docker/.env`.
+## Coding Standards
 
-### Wheel publishing (`hatch build -t wheel`)
+### Python (backend, core library)
+- Python 3.11+. Use type hints everywhere.
+- Pydantic models for data validation (already used throughout).
+- Follow existing patterns in `hastegeo.core.processors` for business logic.
+- Follow existing patterns in `hastegeo.core.data_layer` for storage backends.
+- GDAL/rasterio for geospatial operations — never use raw file I/O for imagery.
+- Never hardcode Azure connection strings or keys. Use `Config` class from `hastegeo.core.config`.
 
-`hastelib/haste_build.py` is a Hatchling custom hook that, on every
-wheel build, **bumps the patch in `__about__.py`, uploads to a private
-Azure blob, and rewrites `requirements.txt` pins across the repo**.
-None of that should happen inside a Docker build, so the three
-Dockerfiles that `pip install /tmp/hastelib/` set
-`HASTE_SKIP_VERSION_BUMP=1`. Don't strip that. Only run `hatch build`
-when you genuinely want to cut a release (and have `az login` set up).
+### JavaScript/React (UI)
+- React functional components with hooks.
+- FluentUI component library — do not introduce alternative UI frameworks.
+- Azure Maps for all geospatial visualization — no Leaflet/Mapbox.
+- MSAL for authentication — do not bypass or mock in production paths.
 
-### APIM operations are managed out-of-band
+### General
+- Write clear, self-documenting code. Avoid unnecessary comments.
+- Prefer small, focused functions over long procedural blocks.
+- Handle errors explicitly — do not silently swallow exceptions.
+- Validate inputs at system boundaries; trust internal data.
+- Never commit secrets, credentials, or API keys.
 
-The `haste-dev.aiforgood.ai` deployment fronts the function app with
-Azure API Management. **Each new HTTP endpoint you add to `function_app.py`
-needs a matching APIM operation registered separately** — otherwise it
-404s with `{"statusCode": 404, "message": "Resource not found"}` in the
-dev/prod environments (works fine locally, since the local stack hits
-the function app directly). There is no APIM config in this repo;
-treat new-endpoint PRs as needing an out-of-band ops handoff.
+## Key Domain Concepts
 
----
+- **Project**: A disaster assessment campaign (e.g., "Maui Wildfires 2023")
+- **Image Layer**: A set of pre/post-event satellite imagery for a project
+- **Source Type**: Satellite imagery provider (Planet, Maxar, Airbus, etc.)
+- **Label Project**: Human labeling of damage on imagery tiles
+- **Model**: ML model trained on labeled data for damage classification
+- **Inference**: Running a trained model on new imagery
+- **Artifact**: Model weights, predictions, and outputs
+- **COG**: Cloud Optimized GeoTIFF — the standard imagery format
 
-## See also
+## Git Conventions
 
-- `README.md` — getting-started for the dev stack.
-- `docker/README.md` — service-by-service docker compose architecture.
-- `docs/development.md` — broader contributor guide.
-- `docs/security-configuration.md` — production deployment guidance
-  from PR #18.
+- Default branch: `main`
+- Use conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`
+- Keep PRs focused — one logical change per PR.
+- Write descriptive PR titles and descriptions.
+
+## Specification System
+
+All feature work, refactors, and architecture decisions are driven by specs in `spec/`.
+
+### Structure
+
+```
+spec/
+├── architecture/
+│   ├── overview.md              # System architecture (canonical reference)
+│   └── decisions/               # ADRs: 0001-template.md, 0002-xyz.md
+├── features/                    # One subfolder per feature spec
+│   └── <feature-name>/
+│       ├── README.md            # Overview, status, components affected
+│       ├── plan.md              # Execution plan, phases, milestones
+│       ├── impact-analysis.md   # Risk, dependencies, blast radius
+│       ├── user-stories.md      # User stories & acceptance criteria
+│       ├── design.md            # Technical design & API contracts
+│       ├── data-model.md        # Cosmos DB / Blob / Data Lake schema changes
+│       ├── test-plan.md         # Test strategy & coverage matrix
+│       └── rollout.md           # Rollout strategy, flags, rollback
+└── _templates/                  # Copy templates when starting new work
+    ├── feature/                 # Full feature spec template
+    └── modification/            # Lighter template for refactors/migrations
+```
+
+### Spec Workflow
+
+1. **Before implementing**: Check `spec/features/` for the relevant spec. Read the `design.md` and `user-stories.md` first.
+2. **During implementation**: Validate work against the spec's acceptance criteria. Update `plan.md` status as tasks complete.
+3. **Architecture decisions**: Record in `spec/architecture/decisions/` using the ADR template.
+4. **New features**: Copy `spec/_templates/feature/` to `spec/features/<name>/` and fill in docs before coding.
+5. **Status lifecycle**: `draft` → `in-review` → `approved` → `in-progress` → `implemented` → `released`
+
+### Rules
+
+- Never start feature work without a spec (at minimum `README.md` + `design.md`).
+- Architecture changes require an ADR in `spec/architecture/decisions/`.
+- Specs are the source of truth — if code diverges from spec, update the spec or fix the code.
+- Cross-reference related specs using relative paths.
+
+## Agent Architecture
+
+HASTE uses specialized agents with clear boundaries. Skills are preferred over agents where possible.
+
+### Core Agents
+
+| Agent | Scope | Touches Code? |
+|-------|-------|--------------|
+| `backend-dev` | Python backend, API, processors, data layers, runners | Yes |
+| `gis` | Satellite imagery, GDAL/rasterio, provider adapters, damage assessment | Yes |
+| `ui` | React/FluentUI/Azure Maps/MSAL, frontend only | Yes |
+| `security` | Dependabot alerts, CVE analysis, dependency audits. Never auto-merges. | No (reports only) |
+
+### Validation Agents
+
+| Agent | Validates | Method |
+|-------|-----------|--------|
+| `backend-validation` | Backend code against specs, conventions, tests | Runs `hatch run test:pytest`, reads code |
+| `ui-validation` | Frontend changes against expected behavior | Runs Playwright tests |
+| `security-validation` | Security Agent findings (packages real, CVEs accurate) | Web research, cross-reference |
+
+### Support Agent
+
+| Agent | Purpose |
+|-------|---------|
+| `orchestrator` | Records what agents did, when, why. Run logs, summaries. Does not own execution. |
+
+### Agent ↔ Spec Integration
+
+- Agents **read specs before implementing** — check `spec/features/` for relevant design docs.
+- Validation agents **compare implementations against spec acceptance criteria**.
+- The orchestrator **tracks spec status** and updates `plan.md` after agent work.
+- Architecture changes trigger an **ADR in `spec/architecture/decisions/`**.
+
+### Agent ↔ Story Mapping (Required)
+
+Every feature spec **must** map user stories to HASTE agents. This is enforced in the templates:
+
+- **`user-stories.md`** must include an **Agent Assignment Map** table: story → implementing agent + validating agent.
+- **`plan.md`** must use agent names (not people/roles) in the **Agent** column of task tables.
+- **Assignment rules:**
+  - `hastelib/`, `api/`, `docker/`, `.github/workflows/` → `backend-dev` implements, `backend-validation` validates.
+  - Satellite imagery, GDAL, provider adapters → `gis` implements or co-implements.
+  - `ui/` → `ui` implements, `ui-validation` validates.
+  - New dependencies → `security` audits, `security-validation` confirms.
+  - `orchestrator` tracks all work — does not need per-story assignment.
+
+## Guardrails
+
+- **No auto-merge** of security fixes — humans remain in the approval loop.
+- **No monolithic agents** — use specialized agents and skills.
+- **Skills preferred over agents** where possible.
+- Agents must never claim tests ran without observable evidence.
+
+## Communication
+
+- Be concise. Explain tradeoffs briefly, then provide the recommended choice.
+- When multiple approaches exist, present the best option with a one-line justification.
+- If unsure about intent, ask a clarifying question rather than guessing.
