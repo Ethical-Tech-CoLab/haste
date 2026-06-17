@@ -8,7 +8,6 @@ import json
 import os
 import re
 import traceback
-from urllib.parse import urlparse
 
 import azure.functions as func  # type: ignore
 import requests  # type: ignore
@@ -43,8 +42,8 @@ from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.url_allowlist import (
-    ALLOWED_HOST_DESCRIPTION,
-    validate_imagery_url,
+    validate_image_layer_imagery_urls,
+    validate_image_layer_user_footprints_url,
 )
 from hastegeo.core.utils.user import InvitationManager, UserManager
 from pydantic import ValidationError  # type: ignore
@@ -121,38 +120,6 @@ def _require_email_param(req: func.HttpRequest, name: str) -> str:
 def _bad_request(name_or_message: str) -> func.HttpResponse:
     logger.warning(f"Rejected request: {name_or_message}")
     return func.HttpResponse("Invalid request parameters.", status_code=400)
-
-
-def _validate_imagery_urls(image_data: ImageLayer) -> str | None:
-    """Validate user-submitted imagery URLs against the host allowlist.
-
-    Returns a user-facing error message if any URL is not on the allowlist,
-    or None if all URLs validate. Full URLs are logged server-side; only
-    rejected hostnames are surfaced to the client.
-    """
-    rejected_hosts: list[str] = []
-    for field_name in ("preEventImageryUrls", "postEventImageryUrls"):
-        urls = getattr(image_data, field_name, None) or []
-        for idx, url in enumerate(urls):
-            if not url:
-                continue
-            try:
-                validate_imagery_url(url)
-            except ValueError:
-                host = urlparse(url).hostname or "<unparseable>"
-                logger.warning(
-                    f"PutLayer rejected URL not on allowlist: "
-                    f"field={field_name} index={idx} host={host}"
-                )
-                rejected_hosts.append(host)
-    if rejected_hosts:
-        unique_hosts = sorted(set(rejected_hosts))
-        return (
-            "One or more imagery URLs are not on the allowlist of permitted "
-            f"hosts ({ALLOWED_HOST_DESCRIPTION}). "
-            f"Rejected host(s): {', '.join(unique_hosts)}."
-        )
-    return None
 
 
 def _decode_client_principal(req: func.HttpRequest) -> dict | None:
@@ -285,6 +252,7 @@ async def UploadFileByChunk(req: func.HttpRequest) -> func.HttpResponse:
         chunk_number = form_data.get("chunk_number")
         total_chunks = form_data.get("total_chunks")
         action = form_data.get("action")
+        data_format = form_data.get("data_format")
         file_chunk = req.files.get("chunk")
 
         def missing_param_response(param_name):
@@ -306,14 +274,21 @@ async def UploadFileByChunk(req: func.HttpRequest) -> func.HttpResponse:
         chunk_number = int(chunk_number)
         total_chunks = int(total_chunks)
         file_uploader = FileUploader(project_id=project_id, config=config)
-        output = await asyncio.to_thread(
-            file_uploader.save_chunk,
-            file_id=file_id,
-            chunk_number=chunk_number,
-            total_chunks=total_chunks,
-            chunk_data=file_chunk,
-            action=action,
-        )
+        try:
+            output = await asyncio.to_thread(
+                file_uploader.save_chunk,
+                file_id=file_id,
+                chunk_number=chunk_number,
+                total_chunks=total_chunks,
+                chunk_data=file_chunk,
+                action=action,
+                data_format=data_format,
+            )
+        except ValueError as e:
+            # Reject unsupported data_format up-front so a hostile client
+            # cannot smuggle an arbitrary extension into the blob path.
+            logger.warning(f"UploadFileByChunk rejected request: {e}")
+            return func.HttpResponse(str(e), status_code=400)
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
     except Exception as e:
@@ -828,9 +803,15 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
         req_body = req.get_json()
         image_data = ImageLayer(**req_body)
 
-        url_error = _validate_imagery_urls(image_data)
+        url_error = validate_image_layer_imagery_urls(image_data)
         if url_error:
             return func.HttpResponse(url_error, status_code=400)
+
+        footprint_url_error = validate_image_layer_user_footprints_url(
+            image_data
+        )
+        if footprint_url_error:
+            return func.HttpResponse(footprint_url_error, status_code=400)
 
         if image_data.imageLayerId is None:
             image_data.imageLayerId = MetadataUtils.generate_id()
@@ -3330,10 +3311,14 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         gpkg_path = await download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
 
         try:
-            # Build index → overture_id from the building footprints file
+            # Build index → overture_id from the building footprints file.
+            # Cast to str so the eventual lookup against labels_dict (which
+            # always has string keys, since JSON object keys are strings)
+            # matches even if the footprints file's id column is integer
+            # typed (common for user-supplied GPKGs).
             with fiona.open(footprints_path) as src_fp:
                 idx_to_overture = {
-                    i: feat["properties"]["id"]
+                    i: str(feat["properties"]["id"])
                     for i, feat in enumerate(src_fp)
                 }
 

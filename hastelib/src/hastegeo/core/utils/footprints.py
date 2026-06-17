@@ -54,6 +54,17 @@ type_theme_map = {
 }
 
 
+# Expected output schema for a building-footprints GeoPackage. Downstream
+# consumers (merge_with_building_footprints, GetBuildingFootprintsGeoJSON,
+# the building-validation UI) tolerate missing ``subtype``/``class`` but
+# always read by column name, so we synthesize a sentinel when the
+# user-supplied input lacks them. Shared between the Overture path
+# (download_building_footprints) and the user-supplied path
+# (clip_and_normalize_user_footprints) so the two produce identical
+# schemas.
+_FOOTPRINT_OUTPUT_COLUMNS = ("id", "geometry", "subtype", "class")
+
+
 def get_all_overture_types() -> List[str]:
     return list(type_theme_map.keys())
 
@@ -211,11 +222,11 @@ def download_building_footprints(
         output_path: Destination ``.gpkg`` filename.
         overwrite: If False and the file already exists, raise FileExistsError.
         aoi_polygon: Optional shapely geometry in EPSG:4326. If provided,
-            footprints whose geometry does not intersect this polygon are
-            dropped — i.e. the bbox-cornered nodata regions of the
-            post-event mosaic are excluded. Buildings are kept whole
-            (no geometric clipping), only filtered, so a footprint
-            partially inside the AOI still appears in full.
+            footprints are geometrically clipped to the polygon: anything
+            fully outside is dropped, and footprints that straddle the
+            AOI boundary are sliced at the edge. This matches the
+            user-supplied-footprints path (``clip_and_normalize_user_footprints``)
+            so the two routes produce structurally-equivalent GPKGs.
 
     Returns:
         Number of features written.
@@ -231,7 +242,7 @@ def download_building_footprints(
         os.remove(output_path)
 
     footprints = geodataframe("building", bbox)
-    footprints = footprints[["id", "geometry", "subtype", "class"]]
+    footprints = footprints[list(_FOOTPRINT_OUTPUT_COLUMNS)]
     footprints = footprints[
         footprints.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
     ]
@@ -239,13 +250,35 @@ def download_building_footprints(
 
     if aoi_polygon is not None:
         before = int(footprints.shape[0])
-        # Keep buildings that intersect the AOI at all — preserves the
-        # whole footprint for partial-coverage buildings rather than
-        # slicing them, which is what downstream damage assessment wants.
-        footprints = footprints[footprints.intersects(aoi_polygon)]
+        # Geometrically clip footprints to the AOI polygon. Matches
+        # clip_and_normalize_user_footprints — the two paths must
+        # produce structurally-equivalent GPKGs so downstream merge /
+        # validation / assessment code can treat them interchangeably.
+        # Repair invalid geometries before clip so gpd.clip doesn't
+        # drop them or raise; ``make_valid`` is preferred (shapely 2.x
+        # native), ``buffer(0)`` is the legacy fallback.
+        try:
+            footprints["geometry"] = footprints.geometry.make_valid()
+        except AttributeError:  # pragma: no cover - shapely < 2.0
+            footprints["geometry"] = footprints.geometry.buffer(0)
+
+        import geopandas as _gpd
+
+        aoi_gdf = _gpd.GeoDataFrame(geometry=[aoi_polygon], crs="EPSG:4326")
+        try:
+            footprints = _gpd.clip(footprints, aoi_gdf, keep_geom_type=True)
+        except TypeError:  # pragma: no cover - geopandas < 0.10
+            footprints = _gpd.clip(footprints, aoi_gdf)
+        # gpd.clip can produce Point/LineString slivers from
+        # boundary-only intersections even with keep_geom_type=True
+        # on some inputs; re-filter defensively.
+        footprints = footprints[
+            footprints.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
+        ]
+        footprints = footprints[~footprints.geometry.is_empty]
         after = int(footprints.shape[0])
         logger.info(
-            "AOI-polygon filter kept %d of %d bbox-matched footprints "
+            "AOI-polygon clip kept %d of %d bbox-matched footprints "
             "(dropped %d outside the valid-area mask)",
             after,
             before,
@@ -260,6 +293,140 @@ def download_building_footprints(
         output_path,
     )
     return int(footprints.shape[0])
+
+
+def clip_and_normalize_user_footprints(
+    input_path: str,
+    aoi_polygon,
+    output_path: str,
+    *,
+    overwrite: bool = False,
+):
+    """Clip a user-supplied building-footprint GPKG to an AOI polygon.
+
+    Reads ``input_path`` (any GDAL-supported vector format readable by
+    geopandas), reprojects to EPSG:4326 if needed, filters to polygonal
+    geometries, clips to ``aoi_polygon`` (EPSG:4326), normalizes the
+    schema to ``(id, geometry, subtype, class)`` synthesizing any
+    missing non-geometry column, and writes a GeoPackage to
+    ``output_path``.
+
+    This is the "user-supplied" counterpart to
+    :func:`download_building_footprints`: both produce GPKG files with
+    the same schema so the rest of HASTE's pipeline can treat them
+    interchangeably.
+
+    Args:
+        input_path: Path to a local building-footprint GPKG (or any
+            geopandas-readable vector file).
+        aoi_polygon: ``shapely.geometry.Polygon`` (or any geometry)
+            describing the AOI, **in EPSG:4326**. Typically the output
+            of :func:`hastegeo.core.utils.aoi.extract_aoi_polygon`.
+        output_path: Destination ``.gpkg`` path.
+        overwrite: Replace the output if it already exists.
+
+    Returns:
+        Number of features written.
+
+    Raises:
+        ImportError: If geopandas is not available.
+        ValueError: If the input has no CRS, no polygonal geometries, or
+            nothing remains after clipping to the AOI.
+        FileExistsError: If ``overwrite`` is False and ``output_path``
+            already exists.
+    """
+    if not output_path.endswith(".gpkg"):
+        raise ValueError("output_path must end with .gpkg")
+    if os.path.exists(output_path):
+        if not overwrite:
+            raise FileExistsError(
+                f"Output file '{output_path}' already exists "
+                "(pass overwrite=True to replace)."
+            )
+        os.remove(output_path)
+
+    gdf = gpd.read_file(input_path)
+    if gdf.crs is None:
+        raise ValueError(
+            "Input GPKG is missing a CRS; embed one (e.g. EPSG:4326) and retry."
+        )
+
+    polygon_mask = gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
+    gdf = gdf.loc[polygon_mask].copy()
+    if gdf.empty:
+        raise ValueError(
+            "Input GPKG contains no Polygon/MultiPolygon features."
+        )
+
+    if gdf.crs.to_epsg() != 4326:
+        logger.info(
+            "Reprojecting %d building footprints from %s to EPSG:4326",
+            len(gdf),
+            gdf.crs,
+        )
+        gdf = gdf.to_crs(epsg=4326)
+
+    # Repair invalid geometries (self-intersections, etc.) before clip so
+    # gpd.clip doesn't drop them or raise. ``buffer(0)`` is the long-standing
+    # geopandas/shapely idiom; ``make_valid`` is the post-2.0 native API,
+    # which we prefer when available.
+    try:
+        gdf["geometry"] = gdf.geometry.make_valid()
+    except AttributeError:  # pragma: no cover - shapely < 2.0
+        gdf["geometry"] = gdf.geometry.buffer(0)
+
+    aoi_gdf = gpd.GeoDataFrame(geometry=[aoi_polygon], crs="EPSG:4326")
+    try:
+        clipped = gpd.clip(gdf, aoi_gdf, keep_geom_type=True)
+    except TypeError:  # pragma: no cover - geopandas < 0.10
+        clipped = gpd.clip(gdf, aoi_gdf)
+    # gpd.clip can produce Point/LineString slivers from boundary-only
+    # intersections even with keep_geom_type=True on some inputs; same
+    # belt-and-suspenders re-filter the Overture path applies.
+    clipped = clipped[
+        clipped.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
+    ]
+    clipped = clipped[~clipped.geometry.is_empty]
+
+    if clipped.empty:
+        raise ValueError(
+            "No user-supplied building footprints intersected the AOI."
+        )
+
+    # Synthesize ``id`` from row index when missing; preserve any
+    # existing values otherwise. Missing ``subtype``/``class`` are left
+    # as ``None`` (downstream readers gate on column presence).
+    #
+    # The ``id`` column is force-cast to *string* even when the input
+    # already provided it. The Overture path produces string GUIDs;
+    # downstream consumers (the validation UI, then the validation /
+    # assessment reports that join labels to inference) key on the
+    # JSON-serialized id, which for an integer column comes through as
+    # a JS number → stringly-coerced object key on PUT → str on the
+    # server. Meanwhile this gpkg's fiona-read id stays int. That mix
+    # caused 'No validation labels could be matched to inference
+    # results' for every user GPKG with int ids (which is most GIS
+    # data). Normalizing here makes the two paths interchangeable.
+    if "id" not in clipped.columns:
+        clipped = clipped.reset_index(drop=True)
+        clipped["id"] = clipped.index.astype(str)
+    else:
+        clipped["id"] = clipped["id"].astype(str)
+    if "subtype" not in clipped.columns:
+        clipped["subtype"] = None
+    if "class" not in clipped.columns:
+        clipped["class"] = None
+
+    out = clipped[list(_FOOTPRINT_OUTPUT_COLUMNS)].copy()
+    out.set_crs(epsg=4326, inplace=True, allow_override=True)
+    out.to_file(output_path, driver="GPKG")
+
+    logger.info(
+        "Wrote %d user-supplied building footprints (clipped to AOI) to %s",
+        out.shape[0],
+        output_path,
+    )
+    return int(out.shape[0])
 
 
 def _main():
