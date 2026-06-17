@@ -187,10 +187,12 @@ export function validateFootprintUrlHost(url) {
     return [false, "URL is missing host component"];
   }
 
-  // Local-dev fallback: allow azurite / localhost / 127.0.0.1 only.
-  // These match the Python-side _AZURITE_DEV_HOSTS allowlist.
+  // Local-dev fallback: allow azurite / localhost / 127.0.0.1 only when the UI
+  // itself is running locally (dev stack). This avoids pre-approving loopback
+  // URLs in deployed environments where the backend will reject them.
   const devHosts = new Set(["azurite", "localhost", "127.0.0.1"]);
-  if (devHosts.has(host)) {
+  const runningLocally = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  if (runningLocally && devHosts.has(host)) {
     return [true, ""];
   }
 
