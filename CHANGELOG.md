@@ -32,6 +32,10 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 - **Additional SDL hardening (UI)** — Added a `globalHeaders` block to `staticwebapp.config.json` (CSP, HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`); repointed the swipe-map script from `samples.azuremaps.com` to a vendored local copy so CSP can constrain all script sources; new `sanitizeRedirectPath()` collapses the logout target to a same-origin relative path (open-redirect guard); new `safeHref()` blocks `javascript:`/`data:`/`vbscript:`/protocol-relative URLs and adds `rel="noopener noreferrer"` at all `<Link>` sites; vendored `world.geojson` locally to drop an external GitHub fetch. ([#41](https://github.com/microsoft/haste/pull/41))
 - **Custom-footprint download hardening** — `validate_footprint_url` extends the imagery allowlist with an exact match against `BLOB_ACCOUNT_URL`; the loopback-host fallback is opt-in only via `HASTE_ALLOW_LOCAL_FOOTPRINT_HOSTS=1` (never on by default) to avoid acting as an SSRF gadget. The workflow re-validates the URL (defense in depth), caps the download size (default 500 MB, env-tunable), refuses cross-host redirects, and soft-fails so already-produced COGs still upload. ([#38](https://github.com/microsoft/haste/pull/38))
 
+### Documentation
+- **Agentic spec framework** — Added the HASTE specification framework under `spec/` (feature templates, architecture docs, ADR template) plus the specialized agent team configuration in `.github/agents/`, `.github/copilot-instructions.md`, `.github/instructions/`, `.github/prompts/`, and `.github/skills/`. ([#36](https://github.com/microsoft/haste/pull/36))
+- **Function API & Queue Functions READMEs** — Rewrote `api/hastefuncapi/README.md` and `api/hastefuncqueues/README.MD` with architecture overviews, a categorized table of all REST endpoints, per-queue-function lifecycle descriptions, and clearer setup, authentication, error-handling, and deployment guidance. ([#48](https://github.com/microsoft/haste/pull/48))
+
 ---
 
 ## [v1.4.5] — Per-environment deploy configuration
