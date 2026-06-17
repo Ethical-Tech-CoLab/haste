@@ -7,6 +7,37 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ---
 
+## [v1.4.6] — Building validation & assessment, custom footprints
+
+### Added
+- **Building Validation workflow** — New `/validation/:projectId/:imageLayerId` page where reviewers walk a random sample of building footprints over the post-disaster imagery and label each **Damaged / Not Damaged / Unknown** (keyboard shortcuts `1`/`2`/`3`), saved to `data/{projectId}/validation/{imageLayerId}.json`. A new `LayerRow` column launches the tool and shows a labeled-count badge. ([#25](https://github.com/microsoft/haste/pull/25))
+- **Validation & Assessment reports** — Two new items in the model **Results** dropdown: a *Validation Report* (overall accuracy, macro F1, per-class precision/recall/F1, confusion matrix; `Unknown` labels excluded from metrics) and an *Assessment Report* (per-building predictions summary, precision/recall/F1/AP at a configurable threshold, a precision-recall curve, and a finite-population estimate with 95% CI of total damaged buildings). The assessment modal degrades gracefully when no validation labels exist. ([#25](https://github.com/microsoft/haste/pull/25))
+- **New API endpoints** — `GetBuildingFootprintsGeoJSON`, `GetBuildingValidation`, `PutBuildingValidation`, `GetValidationReport`, and `GetAssessmentReport`; `GetProjectDetails` now returns `validationLabelCount` per image layer so the dashboard can gate reporting buttons without an extra round-trip. ([#25](https://github.com/microsoft/haste/pull/25))
+- **Raw predictions overlay** in the Visualizer. ([#25](https://github.com/microsoft/haste/pull/25))
+- **Custom building footprints** — Optional panel on the Create Image Layer page to supply a building-footprints GeoPackage (URL or `.gpkg` upload) instead of the Overture Maps download. The imageryprep workflow downloads, reprojects to EPSG:4326, and clips it to the post-event AOI before writing the same `building_footprints_<project>_<layer>.gpkg` path the pipeline already expects — downstream inference/visualization need no changes. Adds `ImageLayer.userBuildingFootprintsUrl`, a `GPKG` data format, and an `{tif, gpkg}` allowlist on chunked upload. ([#38](https://github.com/microsoft/haste/pull/38))
+- **Feature-flagged `AppFooter` component**, hidden by default and enabled via `VITE_SHOW_FOOTER=true`. ([#40](https://github.com/microsoft/haste/pull/40))
+
+### Changed
+- **`hastegeo` bumped to 1.0.15** — Library version propagated across all `requirements.txt` files and `__about__.py`
+- `ImageLayer` URL validators moved into `hastegeo` for reuse across API and workflows. ([#38](https://github.com/microsoft/haste/pull/38))
+
+### Fixed
+- **Visualizer was unreachable** — `GetVisualizerResults` rejected every real `modelId` with HTTP 400 because PR #18's hardening validated it as a GUID, but model IDs are 4-digit short integers. Added a `^[0-9]{1,8}$` validator for the `modelId` param while keeping the GUID checks on `projectId`/`imageLayerId`. ([#39](https://github.com/microsoft/haste/pull/39))
+- **"Don't show again" on guided tours now persists** across reloads and browser restarts — fixed three compounding bugs in the guided-tour state logic and moved the per-tour flag from `sessionStorage` to `localStorage`. ([#37](https://github.com/microsoft/haste/pull/37))
+- **Validation report matched no labels when the user GPKG had integer IDs** — label matching now coerces IDs consistently. ([#38](https://github.com/microsoft/haste/pull/38))
+- **Valid-area mask** is now also saved on the user-footprints path, matching the Overture path. ([#38](https://github.com/microsoft/haste/pull/38))
+- **Permission-denied on chunked file upload** in the local dev compose stack. ([#38](https://github.com/microsoft/haste/pull/38))
+
+### Security
+- **Additional SDL hardening (UI)** — Added a `globalHeaders` block to `staticwebapp.config.json` (CSP, HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`); repointed the swipe-map script from `samples.azuremaps.com` to a vendored local copy so CSP can constrain all script sources; new `sanitizeRedirectPath()` collapses the logout target to a same-origin relative path (open-redirect guard); new `safeHref()` blocks `javascript:`/`data:`/`vbscript:`/protocol-relative URLs and adds `rel="noopener noreferrer"` at all `<Link>` sites; vendored `world.geojson` locally to drop an external GitHub fetch. ([#41](https://github.com/microsoft/haste/pull/41))
+- **Custom-footprint download hardening** — `validate_footprint_url` extends the imagery allowlist with an exact match against `BLOB_ACCOUNT_URL`; the loopback-host fallback is opt-in only via `HASTE_ALLOW_LOCAL_FOOTPRINT_HOSTS=1` (never on by default) to avoid acting as an SSRF gadget. The workflow re-validates the URL (defense in depth), caps the download size (default 500 MB, env-tunable), refuses cross-host redirects, and soft-fails so already-produced COGs still upload. ([#38](https://github.com/microsoft/haste/pull/38))
+
+### Documentation
+- **Agentic spec framework** — Added the HASTE specification framework under `spec/` (feature templates, architecture docs, ADR template) plus the specialized agent team configuration in `.github/agents/`, `.github/copilot-instructions.md`, `.github/instructions/`, `.github/prompts/`, and `.github/skills/`. ([#36](https://github.com/microsoft/haste/pull/36))
+- **Function API & Queue Functions READMEs** — Rewrote `api/hastefuncapi/README.md` and `api/hastefuncqueues/README.MD` with architecture overviews, a categorized table of all REST endpoints, per-queue-function lifecycle descriptions, and clearer setup, authentication, error-handling, and deployment guidance. ([#48](https://github.com/microsoft/haste/pull/48))
+
+---
+
 ## [v1.4.5] — Per-environment deploy configuration
 
 ### Changed
