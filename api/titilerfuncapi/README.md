@@ -1,58 +1,121 @@
-### Function
+# HASTE TiTiler Function API
 
-TiTiler is built on top of [FastAPI](https://github.com/tiangolo/fastapi), a modern, fast, Python web framework for building APIs. We can make our FastAPI application work as an Azure Function by wrapping it within the [Azure Function Python worker](https://github.com/Azure/azure-functions-python-worker).
+A dynamic tile server deployed as an Azure Function, used by HASTE to serve Cloud Optimized GeoTIFF (COG) imagery and model inference results to the visualizer.
 
-If you are not familiar with **Azure functions** we recommend checking https://docs.microsoft.com/en-us/azure/azure-functions/ first.
+This deployment is adapted from the official TiTiler Azure deployment by [Development Seed](https://developmentseed.org/):
+**[github.com/developmentseed/titiler/tree/main/deployment/azure](https://github.com/developmentseed/titiler/tree/main/deployment/azure)**
 
-Minimal TiTiler Azure function code:
+---
+
+## What is TiTiler?
+
+[TiTiler](https://developmentseed.org/titiler/) is an open-source dynamic tile server built on [FastAPI](https://fastapi.tiangolo.com/). It reads geospatial raster files (COGs, STAC items, MosaicJSONs) directly from blob storage and serves XYZ map tiles on demand — no pre-tiling required.
+
+HASTE uses it to render:
+- Pre- and post-event satellite imagery layers
+- Model inference output (predicted damage GeoTIFF) with colormap overlays
+
+---
+
+## HASTE Modifications
+
+The upstream deployment provides a minimal Azure Function wrapper around the TiTiler FastAPI app. The `app/__init__.py` in this directory extends that with the following changes:
+
+### Feature flags
+The upstream unconditionally registers all routers. Here, each router is conditionally included based on `ApiSettings`:
+
 ```python
-import azure.functions as func
-from titiler.application.main import cog, mosaic, stac, tms
-from fastapi import FastAPI
-
-
-app = FastAPI()
-app.include_router(cog.router, prefix="/cog", tags=["Cloud Optimized GeoTIFF"])
-app.include_router(
-    stac.router, prefix="/stac", tags=["SpatioTemporal Asset Catalog"]
-)
-app.include_router(mosaic.router, prefix="/mosaicjson", tags=["MosaicJSON"])
-app.include_router(tms.router, tags=["TileMatrixSets"])
-
-
-async def main(
-    req: func.HttpRequest, context: func.Context,
-) -> func.HttpResponse:
-    return await func.AsgiMiddleware(app).handle_async(req, context)
+if not api_settings.disable_cog:
+    app.include_router(cog.router, prefix="/cog", ...)
+if not api_settings.disable_stac:
+    app.include_router(stac.router, prefix="/stac", ...)
+if not api_settings.disable_mosaic:
+    app.include_router(mosaic.router, prefix="/mosaicjson", ...)
 ```
 
-#### Requirements
+### Added middleware stack
+The upstream has no middleware. This deployment adds:
+
+| Middleware | Purpose |
+|-----------|---------|
+| `CORSMiddleware` | Configurable allowed origins via `api_settings.cors_origins` |
+| `CompressionMiddleware` | Response compression (excludes JPEG, PNG, JP2, WebP — already compressed) |
+| `CacheControlMiddleware` | Cache headers via `api_settings.cachecontrol`; excludes `/healthz` |
+| `LoggerMiddleware` + `TotalTimeMiddleware` | Request logging and timing (debug mode only) |
+| `LowerCaseQueryStringMiddleware` | Normalizes query parameter casing (optional) |
+
+### Added endpoints
+Two endpoints not present in the upstream minimal example:
+
+- `GET /healthz` — health check, returns `{"ping": "pong!"}`
+- `GET /` — HTML landing page via TiTiler's built-in template
+
+### Exception handlers
+Explicit registration of TiTiler's COG and Mosaic error codes:
+
+```python
+add_exception_handlers(app, DEFAULT_STATUS_CODES)
+add_exception_handlers(app, MOSAIC_STATUS_CODES)
+```
+
+### Route prefix removed
+`host.json` sets `routePrefix: ""` to strip the default `/api` prefix that Azure Functions adds to all routes.
+
+---
+
+## Routes
+
+| Prefix | Description |
+|--------|-------------|
+| `/cog` | Cloud Optimized GeoTIFF endpoints (tile, info, statistics, preview) |
+| `/stac` | SpatioTemporal Asset Catalog endpoints |
+| `/mosaicjson` | MosaicJSON mosaic endpoints |
+| `/tms` | TileMatrixSets |
+| `/healthz` | Health check |
+| `/` | Landing page |
+
+Full interactive API docs are available at `/docs` when running.
+
+---
+
+## Configuration
+
+TiTiler is configured via environment variables through `ApiSettings` (from `titiler.application.settings`):
+
+| Variable | Description |
+|----------|-------------|
+| `TITILER_API_DISABLE_COG` | Set to `true` to disable COG endpoints |
+| `TITILER_API_DISABLE_STAC` | Set to `true` to disable STAC endpoints |
+| `TITILER_API_DISABLE_MOSAIC` | Set to `true` to disable MosaicJSON endpoints |
+| `TITILER_API_CORS_ORIGINS` | Comma-separated list of allowed CORS origins |
+| `TITILER_API_CACHECONTROL` | Cache-Control header value for tile responses |
+| `TITILER_API_DEBUG` | Set to `true` to enable request logging middleware |
+| `TITILER_API_LOWER_CASE_QUERY_PARAMETERS` | Set to `true` to normalize query param casing |
+
+---
+
+## Development Setup
+
+### Prerequisites
+
 - Azure CLI: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli
-- Azure Function Tool: https://docs.microsoft.com/en-us/azure/azure-functions/functions-run-local
-
-#### Deployment
-
-See: https://docs.microsoft.com/en-us/azure/azure-functions/create-first-function-cli-python?tabs=azure-cli%2Cbash%2Cbrowser#create-supporting-azure-resources-for-your-function
+- Azure Functions Core Tools:
 
 ```bash
-$ git clone https://github.com/developmentseed/titiler.git
-$ cd titiler/deployment/azure
-
-$ az login
-$ az group create --name AzureFunctionsTiTiler-rg --location eastus
-$ az storage account create --name {your-new-storage-name} --sku Standard_LRS -g AzureFunctionsTiTiler-rg
-$ az functionapp create --consumption-plan-location eastus --runtime python --runtime-version 3.9 --functions-version 4 --name {your-new-function-name} --os-type linux -g AzureFunctionsTiTiler-rg -s {your-new-storage-name}
-$ func azure functionapp publish titiler --python
+npm install -g azure-functions-core-tools@4 --unsafe-perm true
 ```
 
-or
+### Running Locally
 
-use VScode: https://docs.microsoft.com/en-us/azure/azure-functions/create-first-function-vs-code-python#publish-the-project-to-azure
+```bash
+func start
+```
 
-##### Docs
-- https://docs.microsoft.com/en-us/azure/azure-functions/functions-deployment-technologies
-- https://docs.microsoft.com/en-us/azure/azure-functions/functions-triggers-bindings
-- https://docs.microsoft.com/en-us/azure/azure-functions/functions-reference-python
+### Deployment
 
+```bash
+func azure functionapp publish {your-function-app-name} --python
+```
 
-
+For full deployment instructions see the upstream docs:
+https://docs.microsoft.com/en-us/azure/azure-functions/create-first-function-cli-python
