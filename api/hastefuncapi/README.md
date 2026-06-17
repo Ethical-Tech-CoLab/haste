@@ -9,7 +9,7 @@ Azure Functions backend for the HASTE application. Provides REST endpoints for m
 All functions are defined in `function_app.py` as a single Azure Functions app. Authentication is controlled by the `DEVELOPMENT_MODE` environment variable:
 
 - **Development (`DEVELOPMENT_MODE=true`):** Auth level is `ANONYMOUS`; user accounts are auto-created on first login.
-- **Production:** Auth level is `FUNCTION`; Azure Static Web Apps client principal headers are required.
+- **Production:** Auth level is `FUNCTION`; Azure Static Web Apps client principal headers are used for identity/role checks (required for admin endpoints).
 
 ---
 
