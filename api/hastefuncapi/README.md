@@ -1,60 +1,131 @@
-# HASTE Service Functions
+# HASTE Function API
 
-## Install Azure Functions Core Tools
+Azure Functions backend for the HASTE application. Provides REST endpoints for managing projects, image layers, ML model training/inference, labeling, user management, and geospatial data access.
 
-Docs: https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local?tabs=windows%2Cisolated-process%2Cnode-v4%2Cpython-v2%2Chttp-trigger%2Ccontainer-apps&pivots=programming-language-javascript
+---
+
+## Overview
+
+All functions are defined in `function_app.py` as a single Azure Functions app. Authentication is controlled by the `DEVELOPMENT_MODE` environment variable:
+
+- **Development (`DEVELOPMENT_MODE=true`):** Auth level is `ANONYMOUS`; user accounts are auto-created on first login.
+- **Production:** Auth level is `FUNCTION`; Azure Static Web Apps client principal headers are used for identity/role checks (required for admin endpoints).
+
+---
+
+## Endpoints
+
+### Projects
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `GetDashboardData` | Aggregated dashboard stats: project summaries, layer info, model status, and system-wide metrics. |
+| GET | `GetProjects` | All projects with aggregated layer and model counts. |
+| GET | `GetProjectDetails` | Full project details including image layers, models, and processing status. Requires `projectId`. |
+| PUT | `PutProject` | Create or update a project. Auto-generates `projectId` and `creationDate` if not provided. |
+| DELETE | `DeleteProject` | Delete a project by `projectId`. |
+| GET | `GenerateProjectStats` | Regenerates project stats from raw data — useful if stats fall out of sync. |
+
+### Image Layers
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| PUT | `PutLayer` | Create or update an image layer. |
+| DELETE | `DeleteLayer` | Delete a layer. Requires `projectId` and `imageLayerId`. |
+| GET | `GetLayerDetailView` | Detail view for a single image layer. Requires `projectId` and `imageLayerId`. |
+| GET | `GetLayerModelsDetails` | Model status and model list for a given layer. Requires `projectId` and `imageLayerId`. |
+| GET | `GetLayerLabelingToolData` | Label tool data for a given layer. Requires `projectId` and `imageLayerId`. |
+| PUT | `PutLabelsFromLabelTool` | Save labels for a layer from the label tool. |
+
+### File Upload
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `UploadFileByChunk` | Upload large geospatial files in chunks. Supports resumable uploads and parallel chunk processing with progress tracking and validation. |
+
+### Model Training & Inference
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| PUT | `PutRunModelQueueMessage` | Queue a model training run. |
+| PUT | `PutCancelModelQueueMessage` | Cancel a queued or running training **or inference** job for a model. |
+| PUT | `PutRunInferenceQueueMessage` | Queue an inference run. |
+| DELETE | `DeleteModel` | Delete a model. Requires `projectId` and `modelId`. |
+| GET | `GetVisualizerResults` | Visualizer data with imagery layers and TiTiler tile URLs with colormaps. Requires `projectId`, `imageLayerId`, and `modelId`. |
+| PUT | `PutArtifactsZipQueueMessage` | Queue a job to zip model artifacts for download. |
+
+### Model Catalog
+
+These endpoints use `FUNCTION`-level auth regardless of development mode (intended for system-to-system calls).
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `GetModelCatalog` | All available base models. Supports filtering by `eventTypes` (comma-separated) and `imagerySource`. |
+| PUT | `PutModelCatalog` | Add a HASTE or external model to the catalog for reuse as a base model. |
+| DELETE | `DeleteModelCatalog` | Remove a model from the catalog by `baseModelName` or `modelId`. |
+
+### Validation & Assessment
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `GetBuildingFootprintsGeoJSON` | Random sample of building footprints as a GeoJSON FeatureCollection. `sample` param controls count (1–2000, default 200). |
+| GET | `GetBuildingValidation` | Existing building validation labels for a layer (Damaged / NotDamaged / Unknown). |
+| PUT | `PutBuildingValidation` | Save (replace) building validation labels for a layer. |
+| GET | `GetValidationReport` | Validation accuracy report: confusion matrix, accuracy, precision, recall, F1. Crosses inference results with user-supplied labels. |
+| GET | `GetAssessmentReport` | Full damage assessment: precision/recall/AP against labels, plus a finite-population estimate with 95% CI for damaged building count. Supports `threshold` and `minAreaM2` query params. |
+
+### Users & Admin
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `GetUsers` | All users. Requires `administrators` role. |
+| GET | `GetUserById` | Single user by `userId`. |
+| PUT | `PutUser` | Create or update a user. Handles invitations, reinvitations, role assignment, and reactivation. |
+| DELETE | `DeleteUser` | Delete a user by `userId` (email). Requires `administrators` role. |
+| GET | `GetAdminSettings` | All admin settings. Requires `administrators` role. |
+| PUT | `PutAdminSettings` | Update admin settings. Requires `administrators` role. |
+
+### Utilities
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `GetAzureMapsToken` | Short-lived Azure AD token for Azure Maps, obtained via managed identity. |
+| OPTIONS | `options/{*path}` | CORS preflight handler — automatically responds to all OPTIONS requests. |
+
+---
+
+## Development Setup
+
+### Prerequisites
+
+Install Azure Functions Core Tools:
 
 ```bash
 npm install -g azure-functions-core-tools@4 --unsafe-perm true
 ```
 
-## Create a new function app
+Docs: https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local
+
+### Running Locally
+
+Set environment variables in `local.settings.json`, including `DEVELOPMENT_MODE=true` to bypass authentication.
+
+Launch the app:
+
 ```bash
-func init hastefuncapi --python
-cd hastefuncapi
-
-func new --name GetDashboardData --template "HTTP trigger" # get all dashboard data
-func new --name GetProjects --template "HTTP trigger" # get the list of projects
-func new --name PutProject --template "HTTP trigger" # create or update a project
-func new --name DeleteProject --template "HTTP trigger" #delete a Project
-func new --name GetProjectDetails --template "HTTP trigger" #returns project details and layer details (model counts, label counts etc/)
-func new --name GetLayerLabelingToolData --template "HTTP trigger" #returns layer labeling tool data
-func new --name GetLayerModelsDetails --template "HTTP trigger" #returns layer model details (model status, model list associated to the given layer, etc.)
-func new --name GetDefaultModelConfig --template "HTTP trigger" # get default model config
-func new --name PutLayer --template "HTTP trigger" #create or update a layer
-func new --name GetLayerDetailView --template "HTTP trigger" #returns image layer details. For when you click on an image layer name and go into the detail view
-func new --name PutRunModelQueueMessage --template "HTTP trigger" # when you click on the run model button
-func new --name PutCancelDeleteModelQueueMessage --template "HTTP trigger" # when you click on the cancel model button in the image layer detail view
-func new --name PutRunInferenceQueueMessage --template "HTTP trigger" # when you click on the run inference button
-func new --name PutCancelInferenceQueueMessage --template "HTTP trigger" # when you click on the cancel inference button in the image layer detail view
-func new --name GetModelInferenceResults --template "HTTP trigger" # when you click on the view results button. This is the data for the visualizer tool.
-func new --name GetAdminSettings --template "HTTP trigger" # get all admin settings
-func new --name PutLabelToolSettings --template "HTTP trigger" # update label tool settings
-func new --name PutBaseModelSettings --template "HTTP trigger" # create or update base model
-func new --name DeleteBaseModelSettings --template "HTTP trigger" # delete base model
-func new --name PutSourceTypeSettings --template "HTTP trigger" # create or update source type
-func new --name DeleteSourceTypeSettings --template "HTTP trigger" # delete source type
-func new --name PutUsers --template "HTTP trigger" # create or update user
-func new --name GetUsers --template "HTTP trigger" # get all users
-func new --name DeleteUsers --template "HTTP trigger" # delete user
-func new --name PutDefaultModelConfig --template "HTTP trigger" # create or update default model config
-func new --name PutLabelsFromLabelTool --template "HTTP trigger" # create or update labels for a given image layer for the label tool
-func new --name GetLabelToolTutorialData --template "HTTP trigger" # get label tool tutorial data for inline guidance in the label tool
-
-
-func new --name GetCreateModelRunQueueMessage --template "Azure Queue Storage trigger"
-func new --name GetUpdateStatusModelRunQueueMessage --template "Azure Queue Storage trigger"
-func new --name GetCancelDeleteModelRunQueueMessage --template "Azure Queue Storage trigger"
-func new --name GetProcessImageLayerQueueMessage --template "Azure Queue Storage trigger"
+func start
 ```
 
-## Local debugging
-1. Add breakpoints at the desired point in code using
+Or use the `Launch Functions` VS Code launch configuration.
+
+### Local Debugging
+
+Add a breakpoint in code:
+
 ```python
 breakpoint()
 ```
 
-2. Launch Functions locally using the target `Launch Functions`
-In the Terminal where the functions are running, you will be dropped into the pdb prompt when execution reaches the breakpoint. You can use all features of pdb here.
+Then use the `Launch Functions` VS Code task. When execution reaches the breakpoint, the terminal drops into a `pdb` prompt with full debugger support.
 
-Note: Using the visual breakpoint setter will not work because the running azure function is not attached to the VSCode python visual debugger
+> **Note:** The VS Code visual breakpoint UI will not work here — the Azure Functions process is not attached to the VS Code Python debugger.
