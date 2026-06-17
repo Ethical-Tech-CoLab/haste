@@ -20,8 +20,8 @@ HTTP API → Azure Storage Queue → Azure Function (trigger)
                                         │
                                ┌────────┴────────┐
                                │  IN_PROGRESS?   │
-                               │  Re-queue self  │← function exits, queue message
-                               └────────┬────────┘  re-appears after visibility timeout
+                               │  Enqueue next   │← function exits after sending a new message
+                               └────────┬────────┘  (delay via send_message visibility_timeout)
                                         │
                                    COMPLETED / FAILED
                                         │
