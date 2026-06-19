@@ -36,6 +36,7 @@ import {
   holdoutMetricsDamaged,
   isValidVector,
   predictClasses,
+  trainAndPredictBatched,
 } from "./interactiveModel.js";
 import { getGpu } from "./gpuLogreg.js";
 
@@ -120,13 +121,17 @@ const InteractiveLabeler = () => {
   const [counts, setCounts] = useState({ 0: 0, 1: 0, 2: 0 });
   const [predictedCount, setPredictedCount] = useState(0);
   const [metrics, setMetrics] = useState(null);
-  const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [mapInfo, setMapInfo] = useState({ lat: 0, lon: 0, zoom: 0 });
   const [buildingCount, setBuildingCount] = useState(0);
   const [backend, setBackend] = useState(null); // "WebGPU" | "CPU"
 
-  // selectedClass is read inside the (once-bound) map click handler.
+  // Tracks the active full-coverage Save: phase + current/total counters
+  // for the progress UI. Null means no save is in progress.
+  const [saveProgress, setSaveProgress] = useState(null);
+  // {phase: 'download'|'train'|'predict'|'save'|'done'|'cancelled',
+  //  current?: number, total?: number, message?: string}
+  const saveAbortRef = useRef({ cancelled: false });
   const selectedClassRef = useRef(selectedClass);
   useEffect(() => {
     selectedClassRef.current = selectedClass;
@@ -723,33 +728,143 @@ const InteractiveLabeler = () => {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  // ── Save: labels + predictions ────────────────────────────────────────────
+  // ── Save: full-coverage train + predict + persist ─────────────────────────
   //
-  // INTERIM IMPLEMENTATION — saves only the predictions for buildings the
-  // user has actually loaded by panning/zooming over their tiles. The next
-  // commit will rewire this to:
-  //   1. Download the full embeddings GeoJSON
-  //   2. Train on labels
-  //   3. Predict for every building (in batches, with a progress UI)
-  //   4. Write a complete predictions GPKG
-  // so the saved output is always full-coverage regardless of viewport.
+  // Save is the only place that promises full-coverage output. The
+  // interactive Predict toggle is viewport-scoped (only buildings the
+  // user has panned over); Save downloads the complete embeddings,
+  // trains on all labels, predicts for every building in batches, and
+  // writes one complete predictions GPKG. Progress is rendered as a
+  // modal overlay with phases (download → train → predict → save) and a
+  // cancel button that stops cleanly between batches.
   async function handleSave() {
-    setIsSaving(true);
-    setIsLoading(true, "Saving predictions…");
+    if (saveProgress) return; // Don't double-fire.
+    const entries = Object.values(labeledMapRef.current).filter((e) =>
+      isValidVector(e.features)
+    );
+    if (entries.length === 0) {
+      setDialog(
+        "Nothing to save",
+        "Label at least one building (with valid features) before saving."
+      );
+      return;
+    }
+    saveAbortRef.current = { cancelled: false };
+
     try {
-      // 1. Manual labels -> model-scoped interactive-labeler store (keyed by
-      // Overture id). This is SEPARATE from the layer-scoped Building
-      // Validation store, so the two workflows don't overwrite each other.
+      // ── Phase 1: download the full embeddings ───────────────────────────
+      setSaveProgress({
+        phase: "download",
+        message: "Downloading embeddings…",
+      });
+      let allFeatures = [];
+      try {
+        const geojson = await apiGet(
+          `GetBuildingEmbeddingsGeoJSON?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
+        );
+        allFeatures = geojson?.features || [];
+      } catch (e) {
+        throw new Error(`Failed to download embeddings: ${e.message || e}`);
+      }
+      if (saveAbortRef.current.cancelled) {
+        setSaveProgress({ phase: "cancelled" });
+        return;
+      }
+      if (allFeatures.length === 0) {
+        throw new Error(
+          "No embeddings available — the embedding workflow has not produced any building features."
+        );
+      }
+
+      // Lazy feature-key detection from the downloaded set (it's the
+      // authoritative source for "every building"). The labeler's
+      // featureKeysRef may have been populated lazily from PMTiles
+      // already; either source should produce the same key set, but
+      // re-detect here so this code path is self-contained.
+      const featureKeys = detectFeatureKeys(allFeatures[0].properties);
+
+      // Build the parallel arrays the model expects: per-building id +
+      // feature vector. Drop buildings whose vectors are non-finite
+      // (the embedding writes NaN placeholders for buildings outside
+      // the raster bounds).
+      const ids = [];
+      const matrix = [];
+      const overtureIds = [];
+      for (const f of allFeatures) {
+        const vec = extractFeatureVector(f.properties, featureKeys);
+        if (!isValidVector(vec)) continue;
+        ids.push(f.properties?.id);
+        overtureIds.push(f.properties?.overture_id ?? f.properties?.id);
+        matrix.push(vec);
+      }
+      if (matrix.length === 0) {
+        throw new Error(
+          "No buildings with valid feature vectors in the downloaded embeddings."
+        );
+      }
+
+      // ── Phase 2 + 3: train once, predict in batches ─────────────────────
+      const {
+        predictions,
+        backend,
+        aborted,
+      } = await trainAndPredictBatched(entries, matrix, {
+        batchSize: 5000,
+        onProgress: (p) => {
+          if (p.phase === "train") {
+            setSaveProgress({ phase: "train", message: "Training model…" });
+          } else if (p.phase === "predict") {
+            setSaveProgress({
+              phase: "predict",
+              current: p.current,
+              total: p.total,
+              message: `Predicting ${p.current.toLocaleString()} / ${p.total.toLocaleString()}…`,
+            });
+          }
+        },
+        shouldAbort: () => saveAbortRef.current.cancelled,
+      });
+
+      if (aborted) {
+        setSaveProgress({ phase: "cancelled" });
+        return;
+      }
+
+      // ── Phase 4: persist ────────────────────────────────────────────────
+      setSaveProgress({ phase: "save", message: "Saving…" });
+
+      // 4a. Per-building predictions -> gpkg on the model (row-index id).
+      // Predictions array is parallel to ids/matrix, both indexed by the
+      // valid-feature subset of the original embeddings file.
+      const predictionPayload = predictions.map((cls, i) => ({
+        id: ids[i],
+        damaged: cls === CLASS_DAMAGED ? 1 : 0,
+        unknown: cls === CLASS_CLOUDY ? 1.0 : 0.0,
+      }));
+      await apiPut("PutBuildingPredictions", {
+        projectId,
+        imageLayerId,
+        modelId,
+        predictions: predictionPayload,
+      });
+
+      // 4b. Manual labels -> model-scoped interactive-labeler store
+      // (keyed by Overture id). Build from labeledMapRef + the overture
+      // ids we collected from the downloaded set above.
       const labels = {};
+      // Map id -> overture id from the downloaded set; falls back to id
+      // itself for buildings without an overture id.
+      const overtureById = new Map();
+      ids.forEach((id, i) => overtureById.set(id, overtureIds[i]));
       for (const [id, entry] of Object.entries(labeledMapRef.current)) {
-        const f = loadedFeaturesRef.current.get(
-          // Object.keys coerces numeric ids to strings; the source map is
-          // keyed by whatever the tile feature exposes (typically number).
-          Number.isNaN(Number(id)) ? id : Number(id)
-        ) || loadedFeaturesRef.current.get(id);
-        const overtureId = f?.properties?.overture_id ?? id;
-        labels[overtureId] = {
-          id: overtureId,
+        // labeledMapRef may have string-typed keys from Object.entries;
+        // both string and number lookups are tried to be safe.
+        const ovId =
+          overtureById.get(id) ??
+          overtureById.get(Number(id)) ??
+          id;
+        labels[ovId] = {
+          id: ovId,
           label: CLASS_TO_VALIDATION[entry.label],
           updatedAt: new Date().toISOString(),
         };
@@ -761,41 +876,43 @@ const InteractiveLabeler = () => {
         labels,
       });
 
-      // 2. Per-building predictions -> gpkg on the model (row-index id).
-      // Only writes predictions for loaded buildings; the full-coverage
-      // version lands in a subsequent commit.
-      const predictions = [];
-      for (const f of loadedFeaturesRef.current.values()) {
-        const id = f.properties?.id;
-        const cls = predictionsMapRef.current[id];
-        predictions.push({
-          id,
-          damaged: cls === CLASS_DAMAGED ? 1 : 0,
-          unknown: cls === CLASS_CLOUDY ? 1.0 : 0.0,
-        });
+      // Update local prediction map so the UI's "N predicted" status
+      // reflects the full-coverage run that just persisted.
+      const predMap = predictionsMapRef.current;
+      for (let i = 0; i < ids.length; i++) predMap[ids[i]] = predictions[i];
+      // Push every prediction onto currently-loaded features so the map
+      // updates without waiting for a tile reload.
+      for (const id of ids) {
+        if (loadedFeaturesRef.current.has(id) && predMap[id] != null) {
+          setFeaturePred(id, predMap[id]);
+        }
       }
-      await apiPut("PutBuildingPredictions", {
-        projectId,
-        imageLayerId,
-        modelId,
-        predictions,
-      });
+      setBackend(backend);
+      setPredictedCount(ids.length);
 
-      setDialog("Saved", "Labels and predictions saved successfully.", [
-        {
-          type: "primary",
-          key: "close",
-          text: "Close",
-          onClick: () => setDialog(),
-        },
-      ]);
+      setSaveProgress({
+        phase: "done",
+        message: `Saved predictions for ${ids.length.toLocaleString()} buildings.`,
+      });
     } catch (e) {
       console.error("Error saving predictions:", e);
-      setDialog("Error", "Failed to save labels and predictions.");
-    } finally {
-      setIsSaving(false);
-      setIsLoading(false);
+      setSaveProgress({
+        phase: "error",
+        message: `Failed to save: ${e.message || e}`,
+      });
     }
+  }
+
+  // Cancel the in-flight save by flipping the abort ref; the batched
+  // predict loop reads it between batches and exits cleanly. The
+  // download phase doesn't currently abort mid-stream (browser fetch
+  // would need AbortController); the cancel acts on the next phase.
+  function cancelSave() {
+    saveAbortRef.current.cancelled = true;
+  }
+
+  function dismissSaveProgress() {
+    setSaveProgress(null);
   }
 
   const totalLabeled = counts[0] + counts[1] + counts[2];
@@ -922,14 +1039,15 @@ const InteractiveLabeler = () => {
           </div>
 
           <PrimaryButton
-            text={isSaving ? "Saving…" : "Save Predictions"}
-            disabled={isSaving || predictedCount === 0}
+            text={saveProgress ? "Saving…" : "Save Predictions"}
+            disabled={saveProgress != null || totalLabeled === 0}
             onClick={handleSave}
             style={{ marginTop: 16, width: "100%" }}
           />
           <DefaultButton
             text="Train / Predict"
             onClick={maybeTrainAndPredict}
+            disabled={saveProgress != null}
             style={{ marginTop: 8, width: "100%" }}
           />
 
@@ -975,6 +1093,94 @@ const InteractiveLabeler = () => {
         >
           Zoom: {mapInfo.zoom.toFixed(2)} | Lat: {mapInfo.lat.toFixed(4)}, Lon:{" "}
           {mapInfo.lon.toFixed(4)} | {buildingCount.toLocaleString()} buildings
+        </div>
+      )}
+
+      {/* Save progress modal — covers the four phases (download, train,
+          predict, save) of a full-coverage Save. Predict is the only one
+          with a determinate progress bar (batched, current/total known);
+          the others show an indeterminate spinner-like state. The user
+          can cancel between predict batches. */}
+      {saveProgress && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 2000,
+          }}
+        >
+          <div
+            style={{
+              width: 360,
+              background: "#fff",
+              borderRadius: 6,
+              padding: 18,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+            }}
+          >
+            <Text variant="mediumPlus" block style={{ fontWeight: 600, marginBottom: 8 }}>
+              {saveProgress.phase === "done"
+                ? "Done"
+                : saveProgress.phase === "error"
+                ? "Error"
+                : saveProgress.phase === "cancelled"
+                ? "Cancelled"
+                : "Saving predictions"}
+            </Text>
+            <Text variant="small" block style={{ marginBottom: 12, color: "#555" }}>
+              {saveProgress.message ||
+                (saveProgress.phase === "download"
+                  ? "Downloading embeddings…"
+                  : saveProgress.phase === "train"
+                  ? "Training model…"
+                  : saveProgress.phase === "predict"
+                  ? "Predicting…"
+                  : saveProgress.phase === "save"
+                  ? "Saving…"
+                  : "")}
+            </Text>
+            {saveProgress.phase === "predict" &&
+              typeof saveProgress.current === "number" &&
+              typeof saveProgress.total === "number" && (
+                <div
+                  style={{
+                    height: 8,
+                    background: "#eee",
+                    borderRadius: 4,
+                    overflow: "hidden",
+                    marginBottom: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${
+                        (saveProgress.current / Math.max(saveProgress.total, 1)) * 100
+                      }%`,
+                      height: "100%",
+                      background: "#107C10",
+                      transition: "width 0.2s",
+                    }}
+                  />
+                </div>
+              )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              {(saveProgress.phase === "download" ||
+                saveProgress.phase === "train" ||
+                saveProgress.phase === "predict" ||
+                saveProgress.phase === "save") && (
+                <DefaultButton text="Cancel" onClick={cancelSave} />
+              )}
+              {(saveProgress.phase === "done" ||
+                saveProgress.phase === "error" ||
+                saveProgress.phase === "cancelled") && (
+                <PrimaryButton text="Close" onClick={dismissSaveProgress} />
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

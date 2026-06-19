@@ -15,7 +15,13 @@
 //
 // Class encoding (matches index.html): Intact = 0, Damaged = 1, Cloudy = 2.
 
-import { getGpu, gpuBackendName, gpuOvrPredict } from "./gpuLogreg.js";
+import {
+  getGpu,
+  gpuBackendName,
+  gpuOvrPredict,
+  gpuOvrPredictBatch,
+  gpuOvrTrain,
+} from "./gpuLogreg.js";
 
 export const CLASS_INTACT = 0;
 export const CLASS_DAMAGED = 1;
@@ -201,6 +207,84 @@ export async function predictClasses(
     entries.map((e) => e.label)
   );
   return { predictions: ovr.predict(queryMatrix), backend: "CPU" };
+}
+
+// ── Train once, predict in batches (for full-coverage Save) ─────────────────
+// Like predictClasses, but designed for one-train / many-predict so the
+// caller can render incremental progress for very large queryMatrices
+// without retraining per batch.
+//
+// onProgress: ({ phase, current, total }) callback fired after each
+//   training start and after each predict batch. The caller is responsible
+//   for cancellation via shouldAbort() — return true to stop after the
+//   current batch.
+//
+// Returns { predictions, backend } same as predictClasses, but
+// predictions.length === queryMatrix.length even if aborted (entries past
+// the abort point will be undefined; caller should handle that).
+export async function trainAndPredictBatched(
+  entries,
+  queryMatrix,
+  {
+    batchSize = 5000,
+    opts = { learningRate: 0.1, numSteps: 500, lambda: 0.01 },
+    onProgress = () => {},
+    shouldAbort = () => false,
+  } = {}
+) {
+  if (queryMatrix.length === 0) {
+    return { predictions: [], backend: gpuBackendName() };
+  }
+  const classes = [...new Set(entries.map((e) => e.label))].sort(
+    (a, b) => a - b
+  );
+
+  const gpu = await getGpu();
+  let trained = null;
+  let backend = "CPU";
+  if (gpu) {
+    try {
+      onProgress({ phase: "train", current: 0, total: 1 });
+      trained = await gpuOvrTrain(gpu, entries, classes, opts);
+      backend = "WebGPU";
+    } catch (e) {
+      console.warn(
+        "WebGPU train failed; falling back to CPU for batched predict.",
+        e
+      );
+      trained = null;
+    }
+  }
+
+  // CPU fallback path: same one-vs-rest, train once on all entries.
+  let cpuModel = null;
+  if (!trained) {
+    onProgress({ phase: "train", current: 0, total: 1 });
+    cpuModel = new OvRLogisticRegression(opts);
+    cpuModel.train(
+      entries.map((e) => e.features),
+      entries.map((e) => e.label)
+    );
+  }
+
+  const predictions = new Array(queryMatrix.length);
+  const total = queryMatrix.length;
+  for (let start = 0; start < total; start += batchSize) {
+    if (shouldAbort()) {
+      return { predictions, backend, aborted: true };
+    }
+    const end = Math.min(start + batchSize, total);
+    const batch = queryMatrix.slice(start, end);
+    const batchPreds = trained
+      ? await gpuOvrPredictBatch(gpu, trained, batch)
+      : cpuModel.predict(batch);
+    for (let i = 0; i < batchPreds.length; i++) {
+      predictions[start + i] = batchPreds[i];
+    }
+    onProgress({ phase: "predict", current: end, total });
+  }
+
+  return { predictions, backend };
 }
 
 // ── Feature extraction ──────────────────────────────────────────────────────
