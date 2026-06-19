@@ -243,56 +243,41 @@ function flatten(rows, n, d) {
   return out;
 }
 
-// ── One-vs-rest train on the GPU ────────────────────────────────────────────
-// Returns a trained-model handle: { classes, mean, std, perClass: [{w, b}] }
-// where every member is a CPU array/number (no live GPU buffers held).
-// This split — train vs predict — lets the same trained model be re-used
-// across many predict batches without retraining, which is what the save
-// path needs to process the full embedding set without OOM-ing one big
-// batch. The single-shot ergonomics live on at gpuOvrPredict below.
-export async function gpuOvrTrain(
+// ── One-vs-rest predict on the GPU ──────────────────────────────────────────
+// entries: [{features:number[], label:number}]; classes: sorted unique labels;
+// queryMatrix: number[][]. Returns Int array of predicted class labels.
+export async function gpuOvrPredict(
   ctx,
   entries,
   classes,
+  queryMatrix,
   opts = { learningRate: 0.1, numSteps: 500, lambda: 0.01 }
 ) {
   const { device } = ctx;
   const n = entries.length;
   const d = entries[0].features.length;
-  // m=0 is fine for training-only — the params buffer carries m but the
-  // train shaders don't reference it.
-  const m = 0;
+  const m = queryMatrix.length;
   const U = GPUBufferUsage;
 
   const XtrFlat = flatten(entries.map((e) => e.features), n, d);
+  const XqFlat = flatten(queryMatrix, m, d);
   const { mean, std } = standardizeStats(XtrFlat, n, d);
 
   const Xtr = mkBuffer(device, XtrFlat, U.STORAGE | U.COPY_DST);
+  const Xq = mkBuffer(device, XqFlat, U.STORAGE | U.COPY_DST);
   const meanB = mkBuffer(device, mean, U.STORAGE | U.COPY_DST);
   const stdB = mkBuffer(device, std, U.STORAGE | U.COPY_DST);
   const Ytr = device.createBuffer({ size: n * 4, usage: U.STORAGE | U.COPY_DST });
-  const w = device.createBuffer({
-    size: d * 4,
-    usage: U.STORAGE | U.COPY_DST | U.COPY_SRC,
-  });
+  const w = device.createBuffer({ size: d * 4, usage: U.STORAGE | U.COPY_DST });
   const grad = device.createBuffer({ size: d * 4, usage: U.STORAGE });
   const errv = device.createBuffer({ size: n * 4, usage: U.STORAGE });
-  const scal = device.createBuffer({
-    size: 8,
-    usage: U.STORAGE | U.COPY_DST | U.COPY_SRC,
-  });
-  // Tiny throwaway predict buffer so the shared bind group / pipeline still
-  // builds; never dispatched in this function.
-  const outpUnused = device.createBuffer({
-    size: 4,
+  const scal = device.createBuffer({ size: 8, usage: U.STORAGE | U.COPY_DST });
+  const outp = device.createBuffer({
+    size: m * 4,
     usage: U.STORAGE | U.COPY_SRC,
   });
-  const wStaging = device.createBuffer({
-    size: d * 4,
-    usage: U.MAP_READ | U.COPY_DST,
-  });
-  const scalStaging = device.createBuffer({
-    size: 8,
+  const staging = device.createBuffer({
+    size: m * 4,
     usage: U.MAP_READ | U.COPY_DST,
   });
   const params = paramsBuffer(
@@ -318,92 +303,6 @@ export async function gpuOvrTrain(
       [8, params],
     ].map(([binding, buffer]) => ({ binding, resource: { buffer } })),
   });
-
-  const wgN = Math.ceil(n / 64);
-  const wgD = Math.ceil(d / 64);
-  const zerosD = new Float32Array(d);
-  const zeros2 = new Float32Array(2);
-
-  const perClass = [];
-  for (const c of classes) {
-    const yc = new Float32Array(n);
-    for (let i = 0; i < n; i++) yc[i] = entries[i].label === c ? 1 : 0;
-    device.queue.writeBuffer(Ytr, 0, yc);
-    device.queue.writeBuffer(w, 0, zerosD);
-    device.queue.writeBuffer(scal, 0, zeros2);
-
-    const enc = device.createCommandEncoder();
-    const pass = enc.beginComputePass();
-    for (let step = 0; step < opts.numSteps; step++) {
-      pass.setPipeline(ctx.forwardErr);
-      pass.setBindGroup(0, trainBind);
-      pass.dispatchWorkgroups(wgN);
-      pass.setPipeline(ctx.gradient);
-      pass.dispatchWorkgroups(wgD);
-      pass.setPipeline(ctx.update);
-      pass.dispatchWorkgroups(wgD);
-    }
-    pass.end();
-    enc.copyBufferToBuffer(w, 0, wStaging, 0, d * 4);
-    enc.copyBufferToBuffer(scal, 0, scalStaging, 0, 8);
-    device.queue.submit([enc.finish()]);
-
-    await wStaging.mapAsync(GPUMapMode.READ);
-    const wOut = new Float32Array(wStaging.getMappedRange()).slice();
-    wStaging.unmap();
-    await scalStaging.mapAsync(GPUMapMode.READ);
-    const scalOut = new Float32Array(scalStaging.getMappedRange()).slice();
-    scalStaging.unmap();
-
-    perClass.push({ w: wOut, b: scalOut[0] });
-  }
-
-  [
-    Xtr,
-    meanB,
-    stdB,
-    Ytr,
-    w,
-    grad,
-    errv,
-    scal,
-    outpUnused,
-    wStaging,
-    scalStaging,
-    params,
-  ].forEach((b) => b.destroy());
-
-  return { classes: [...classes], mean, std, perClass };
-}
-
-// Run a single predict batch against a trained model. Builds fresh GPU
-// buffers per call so batches are independent (no shared lifetime
-// gotchas). Returns Int array of predicted class labels for queryMatrix.
-export async function gpuOvrPredictBatch(ctx, trained, queryMatrix) {
-  const { device } = ctx;
-  const { classes, mean, std, perClass } = trained;
-  const d = mean.length;
-  const m = queryMatrix.length;
-  if (m === 0) return [];
-  const U = GPUBufferUsage;
-
-  const XqFlat = flatten(queryMatrix, m, d);
-  const Xq = mkBuffer(device, XqFlat, U.STORAGE | U.COPY_DST);
-  const meanB = mkBuffer(device, mean, U.STORAGE | U.COPY_DST);
-  const stdB = mkBuffer(device, std, U.STORAGE | U.COPY_DST);
-  const w = device.createBuffer({ size: d * 4, usage: U.STORAGE | U.COPY_DST });
-  const scal = device.createBuffer({ size: 8, usage: U.STORAGE | U.COPY_DST });
-  const outp = device.createBuffer({
-    size: m * 4,
-    usage: U.STORAGE | U.COPY_SRC,
-  });
-  const staging = device.createBuffer({
-    size: m * 4,
-    usage: U.MAP_READ | U.COPY_DST,
-  });
-  // lr/lambda are ignored by the predict shader; pass dummies.
-  const params = paramsBuffer(device, 0, d, m, 0, 0);
-
   const predBind = device.createBindGroup({
     layout: ctx.predLayout,
     entries: [
@@ -417,17 +316,34 @@ export async function gpuOvrPredictBatch(ctx, trained, queryMatrix) {
     ].map(([binding, buffer]) => ({ binding, resource: { buffer } })),
   });
 
+  const wgN = Math.ceil(n / 64);
+  const wgD = Math.ceil(d / 64);
   const wgM = Math.ceil(m / 64);
+  const zerosD = new Float32Array(d);
+  const zeros2 = new Float32Array(2);
+
   const probas = [];
-  const scalBuf = new Float32Array(2);
-  for (const { w: wVals, b } of perClass) {
-    device.queue.writeBuffer(w, 0, wVals);
-    scalBuf[0] = b;
-    scalBuf[1] = 0;
-    device.queue.writeBuffer(scal, 0, scalBuf);
+  for (const c of classes) {
+    // Per-class targets + fresh weights.
+    const yc = new Float32Array(n);
+    for (let i = 0; i < n; i++) yc[i] = entries[i].label === c ? 1 : 0;
+    device.queue.writeBuffer(Ytr, 0, yc);
+    device.queue.writeBuffer(w, 0, zerosD);
+    device.queue.writeBuffer(scal, 0, zeros2);
 
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
+    // Training: dispatches within one pass run in order with barriers between.
+    for (let step = 0; step < opts.numSteps; step++) {
+      pass.setPipeline(ctx.forwardErr);
+      pass.setBindGroup(0, trainBind);
+      pass.dispatchWorkgroups(wgN);
+      pass.setPipeline(ctx.gradient);
+      pass.dispatchWorkgroups(wgD);
+      pass.setPipeline(ctx.update);
+      pass.dispatchWorkgroups(wgD);
+    }
+    // Inference for the whole query set.
     pass.setPipeline(ctx.predict);
     pass.setBindGroup(0, predBind);
     pass.dispatchWorkgroups(wgM);
@@ -440,6 +356,7 @@ export async function gpuOvrPredictBatch(ctx, trained, queryMatrix) {
     staging.unmap();
   }
 
+  // Arg-max across the per-class probabilities.
   const preds = new Array(m);
   for (let i = 0; i < m; i++) {
     let best = 0;
@@ -453,23 +370,10 @@ export async function gpuOvrPredictBatch(ctx, trained, queryMatrix) {
     preds[i] = classes[best];
   }
 
-  [Xq, meanB, stdB, w, scal, outp, staging, params].forEach((b) => b.destroy());
+  [Xtr, Xq, meanB, stdB, Ytr, w, grad, errv, scal, outp, staging, params].forEach(
+    (b) => b.destroy()
+  );
   return preds;
-}
-
-// One-vs-rest predict on the GPU. Trains + predicts in one shot — the
-// ergonomic API for the label-click hot path. For multi-batch inference
-// against a single trained model (e.g. the full-coverage Save), use
-// gpuOvrTrain + gpuOvrPredictBatch directly so training only happens once.
-export async function gpuOvrPredict(
-  ctx,
-  entries,
-  classes,
-  queryMatrix,
-  opts = { learningRate: 0.1, numSteps: 500, lambda: 0.01 }
-) {
-  const trained = await gpuOvrTrain(ctx, entries, classes, opts);
-  return gpuOvrPredictBatch(ctx, trained, queryMatrix);
 }
 
 // ── Self-test: train on a trivially separable 2-class problem ───────────────
