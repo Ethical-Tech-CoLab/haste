@@ -173,7 +173,9 @@ class EmbeddingPostprocessor:
                 resource_files_for_upload=input_files,
                 file_pattern=f"${BATCH_JOB_WORKDIR}/outputs/*.*",
                 command=command,
-                image_name="training",
+                image_name=self.config.get_azure_batch_config()[
+                    "docker_image"
+                ],
             )
             self.model_data.embeddingJob = TrainingJob(
                 jobId=job_id,
