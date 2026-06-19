@@ -19,6 +19,7 @@ import {
   Text,
   Toggle,
 } from "@fluentui/react";
+import { Protocol } from "pmtiles";
 import { apiGet, apiPut } from "../../util/api";
 import {
   getAzureMapsAuthOptions,
@@ -37,6 +38,21 @@ import {
   predictClasses,
 } from "./interactiveModel.js";
 import { getGpu } from "./gpuLogreg.js";
+
+// Register the pmtiles protocol once at module load. After this, any
+// VectorTileSource configured with `tiles: ["pmtiles://<url>/{z}/{x}/{y}"]`
+// will route through pmtiles' byte-range-aware reader. Atlas v3 exposes the
+// Mapbox-GL-style `atlas.addProtocol` hook, so we don't need a server-side
+// tile proxy.
+if (typeof window !== "undefined" && window.atlas) {
+  const _pmtilesProtocol = new Protocol();
+  // Idempotent — re-registering the same protocol name is a no-op in atlas.
+  window.atlas.addProtocol("pmtiles", _pmtilesProtocol.tile.bind(_pmtilesProtocol));
+}
+
+// PMTiles layer name as emitted by tippecanoe (see embed_buildings.py:557
+// `-l buildings`). VectorTileSource queries reference this string.
+const PMTILES_SOURCE_LAYER = "buildings";
 
 // Class colors (match index.html). Index = class number.
 const CLASS_COLORS = ["#107C10", "#C50F1F", "#5B5FC7"]; // intact, damaged, cloudy
@@ -70,15 +86,28 @@ const InteractiveLabeler = () => {
 
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
-  const datasourceRef = useRef(null);
+  const vectorTileSourceRef = useRef(null);
   const fillLayerRef = useRef(null);
   const preImageryRef = useRef(null);
   const postImageryRef = useRef(null);
   const featureKeysRef = useRef(null);
   // labeledMap: id -> { label, features }; predictionsMap: id -> class.
+  // Both are model state, NOT render state — they survive a tile unload/
+  // reload cycle because they live client-side and get pushed back onto
+  // the layer via setFeatureState whenever needed.
   const labeledMapRef = useRef({});
   const predictionsMapRef = useRef({});
-  const featuresRef = useRef([]);
+  // Features the user has actually loaded by panning/zooming over their
+  // tiles. Keyed by building id; values are { properties, geometry }.
+  // Hydrated lazily on `moveend` from the VectorTileSource — never
+  // evicted within a session, so labels/predictions stay correlatable.
+  // Save (handleSave) opens a separate full-coverage path that hydrates
+  // the rest from the model's GeoJSON before writing.
+  const loadedFeaturesRef = useRef(new Map());
+  // Tracks which (z,x,y) tiles we've already hydrated so the moveend
+  // listener doesn't redo the same querySourceFeatures+merge work
+  // every time the user pans within a single tile.
+  const hydratedTilesRef = useRef(new Set());
 
   const boxRef = useRef(null); // box-select rectangle div
   const boxCleanupRef = useRef(null); // detaches document-level drag listeners
@@ -154,43 +183,39 @@ const InteractiveLabeler = () => {
       // Imagery is optional — labeling works without it.
     }
 
-    const embeddingsGeoJSON = await apiGet(
-      `GetBuildingEmbeddingsGeoJSON?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
-    );
-
-    const featuresArr = (embeddingsGeoJSON?.features || []).map((f) => ({
-      ...f,
-      // Give each GeoJSON feature a stable top-level id so the Azure Maps
-      // DataSource can address individual shapes by building row index.
-      id: f.properties?.id,
-    }));
-    featuresRef.current = featuresArr;
-    if (featuresArr.length > 0 && featuresArr[0].properties) {
-      featureKeysRef.current = detectFeatureKeys(featuresArr[0].properties);
+    // Fetch the model to get pmtilesUrl. Models for the layer are returned
+    // by GetLayerModelsDetails; pick ours by modelId. The pmtilesUrl is
+    // populated by the embedding workflow (embed_buildings.py:550-567).
+    let pmtilesUrl = "";
+    try {
+      const models = await apiGet(
+        `GetLayerModelsDetails?projectId=${projectId}&imageLayerId=${imageLayerId}`
+      );
+      const model = (models || []).find(
+        (m) => String(m.modelId) === String(modelId)
+      );
+      pmtilesUrl = model?.pmtilesUrl || "";
+    } catch (e) {
+      console.warn("Could not fetch model pmtilesUrl:", e);
+    }
+    if (!pmtilesUrl) {
+      throw new Error(
+        "No PMTiles available for this model — embedding workflow has not produced building tiles."
+      );
     }
 
     // Restore this model's previously-saved interactive labels (separate from
     // the Building Validation store) so reopening the labeler resumes work.
+    // Note: labels are stored keyed by overture id, but we apply them lazily
+    // as tiles load (see hydrateFromVisibleTiles below) — at restore time we
+    // only have the label content, not the feature vector that goes with it.
+    // We stash the raw label map for the hydrator to consult per-tile.
+    let savedLabels = {};
     try {
       const saved = await apiGet(
         `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`
       );
-      const savedLabels = saved?.labels || {};
-      if (Object.keys(savedLabels).length > 0) {
-        for (const f of featuresArr) {
-          const overtureId = f.properties?.overture_id ?? f.properties?.id;
-          const entry = savedLabels[overtureId];
-          if (!entry) continue;
-          const cls = VALIDATION_TO_CLASS[entry.label];
-          if (cls == null) continue;
-          const vec = extractFeatureVector(
-            f.properties,
-            featureKeysRef.current
-          );
-          labeledMapRef.current[f.properties.id] = { label: cls, features: vec };
-        }
-        refreshCounts();
-      }
+      savedLabels = saved?.labels || {};
     } catch {
       // No saved labels yet — start fresh.
     }
@@ -235,53 +260,73 @@ const InteractiveLabeler = () => {
         );
       }
 
-      const datasource = new window.atlas.source.DataSource();
-      map.sources.add(datasource);
-      datasourceRef.current = datasource;
+      // Building footprints come from a PMTiles archive built by the
+      // embedding workflow (see embed_buildings.py:550-567 tippecanoe).
+      // f_* feature columns are baked into the tiles — they're read out
+      // on demand from the loaded source rather than downloaded as one
+      // big GeoJSON. Promote `id` so per-feature setFeatureState calls
+      // can address buildings by their stable id.
+      const source = new window.atlas.source.VectorTileSource(null, {
+        tiles: [`pmtiles://${pmtilesUrl}/{z}/{x}/{y}`],
+        promoteId: "id",
+        // Max zoom that tippecanoe wrote (we used `-zg` which auto-picks).
+        // Atlas overzooms above this so we don't need to set it precisely.
+      });
+      map.sources.add(source);
+      vectorTileSourceRef.current = source;
 
-      if (featuresArr.length > 0) {
-        // Only geometry + id + render state go on the map; the heavy f_*
-        // feature columns stay in featuresRef for the in-browser model.
-        datasource.add(buildRenderCollection());
+      const fillLayer = new window.atlas.layer.PolygonLayer(
+        source,
+        "embeddingFill",
+        {
+          // The source is the PMTiles archive's named layer ('buildings');
+          // we read render state out of feature-state, which is per-id
+          // client-side state pushed via setFeatureState.
+          sourceLayer: PMTILES_SOURCE_LAYER,
+          fillColor: fillColorExpr(viewModeRef.current),
+          fillOpacity: 0.5,
+        }
+      );
+      map.layers.add(fillLayer);
+      fillLayerRef.current = fillLayer;
 
-        const fillLayer = new window.atlas.layer.PolygonLayer(
-          datasource,
-          "embeddingFill",
-          {
-            fillColor: labelFillColorExpr(),
-            fillOpacity: 0.5,
-          }
-        );
-        map.layers.add(fillLayer);
-        fillLayerRef.current = fillLayer;
+      map.layers.add(
+        new window.atlas.layer.LineLayer(source, "embeddingOutline", {
+          sourceLayer: PMTILES_SOURCE_LAYER,
+          strokeColor: "#1a5276",
+          strokeWidth: 1,
+        })
+      );
 
-        map.layers.add(
-          new window.atlas.layer.LineLayer(datasource, "embeddingOutline", {
-            strokeColor: "#1a5276",
-            strokeWidth: 1,
-          })
-        );
+      map.events.add("click", fillLayer, (e) => {
+        // Ctrl/Cmd is the box-select modifier — don't also single-label.
+        if (e.originalEvent && (e.originalEvent.ctrlKey || e.originalEvent.metaKey)) {
+          return;
+        }
+        const id = clickedBuildingId(e);
+        if (id != null) labelBuilding(id, selectedClassRef.current);
+      });
+      map.events.add("contextmenu", fillLayer, (e) => {
+        const id = clickedBuildingId(e);
+        if (id != null) clearLabel(id);
+        return false;
+      });
+      map.getCanvasContainer().style.cursor = "pointer";
+      setupBoxSelect(map);
 
-        map.events.add("click", fillLayer, (e) => {
-          // Ctrl/Cmd is the box-select modifier — don't also single-label.
-          if (e.originalEvent && (e.originalEvent.ctrlKey || e.originalEvent.metaKey)) {
-            return;
-          }
-          const id = clickedBuildingId(e);
-          if (id != null) labelBuilding(id, selectedClassRef.current);
-        });
-        map.events.add("contextmenu", fillLayer, (e) => {
-          const id = clickedBuildingId(e);
-          if (id != null) clearLabel(id);
-          return false;
-        });
-        map.getCanvasContainer().style.cursor = "pointer";
-        setBuildingCount(featuresArr.length);
-        setupBoxSelect(map);
-
-        const c = extractCentroid(featuresArr[0]);
-        if (c) map.setCamera({ center: c, zoom: 17, duration: 0 });
-      }
+      // Hydrate loadedFeaturesRef as the user pans/zooms — this is what
+      // makes the in-browser model "see" buildings the user has looked at.
+      // Also: pushes any restored labels back as feature-state so they
+      // render the moment their tile loads.
+      const hydrate = () => hydrateFromVisibleTiles(map, savedLabels);
+      map.events.add("moveend", hydrate);
+      map.events.add("sourcedata", (e) => {
+        // sourcedata fires whenever a tile finishes loading. Atlas may
+        // pass an unknown event shape; guard on the source id.
+        if (e && e.sourceId && source.getId() === e.sourceId && e.isSourceLoaded) {
+          hydrate();
+        }
+      });
 
       // Info bar: keep lat/lon/zoom in sync as the camera moves.
       const syncInfo = () => {
@@ -298,6 +343,64 @@ const InteractiveLabeler = () => {
     });
 
     mapRef.current = map;
+  }
+
+  // Read currently-rendered features from the PMTiles source, merge new
+  // ones into loadedFeaturesRef, and re-apply any restored labels as
+  // feature-state so labels show as soon as their tile is on screen.
+  function hydrateFromVisibleTiles(map, savedLabels) {
+    const source = vectorTileSourceRef.current;
+    if (!source) return;
+    let features;
+    try {
+      features = source.getShapes
+        ? source.getShapes()
+        : map.layers.getRenderedShapes(fillLayerRef.current);
+    } catch {
+      features = [];
+    }
+    // Atlas v3 returns either Shape objects or raw GeoJSON features
+    // depending on render path; normalize.
+    const loaded = loadedFeaturesRef.current;
+    const labelMap = labeledMapRef.current;
+    let newCount = 0;
+    for (const f of features) {
+      const props =
+        typeof f.getProperties === "function" ? f.getProperties() : f.properties;
+      const geom =
+        typeof f.getGeometry === "function" ? f.getGeometry() : f.geometry;
+      const id = props?.id;
+      if (id == null || loaded.has(id)) continue;
+
+      // Lazy detect feature keys on the first hydrated feature.
+      if (!featureKeysRef.current) {
+        featureKeysRef.current = detectFeatureKeys(props);
+      }
+      loaded.set(id, { properties: props, geometry: geom });
+      newCount++;
+
+      // Restore any saved label for this newly-visible building.
+      // Saved labels are keyed by overture id, but the source-of-truth
+      // labelMap is keyed by the same id field surfaced on properties.
+      const overtureId = props.overture_id ?? id;
+      const saved = savedLabels[overtureId];
+      if (saved && !labelMap[id]) {
+        const cls = VALIDATION_TO_CLASS[saved.label];
+        if (cls != null) {
+          const vec = extractFeatureVector(props, featureKeysRef.current);
+          labelMap[id] = { label: cls, features: vec };
+          setFeatureLabel(id, cls);
+        }
+      }
+      // Reapply any in-session label/prediction whose tile just reloaded.
+      if (labelMap[id]) setFeatureLabel(id, labelMap[id].label);
+      const pred = predictionsMapRef.current[id];
+      if (pred != null) setFeaturePred(id, pred);
+    }
+    if (newCount > 0) {
+      setBuildingCount(loaded.size);
+      refreshCounts();
+    }
   }
 
   // ── Ctrl+drag box-select labeling ─────────────────────────────────────────
@@ -362,7 +465,7 @@ const InteractiveLabeler = () => {
       const maxLat = Math.max(...lats);
 
       const ids = [];
-      for (const f of featuresRef.current) {
+      for (const f of loadedFeaturesRef.current.values()) {
         const ctr = extractCentroid(f);
         if (!ctr) continue;
         if (
@@ -388,21 +491,19 @@ const InteractiveLabeler = () => {
   }
 
   // ── Paint expressions ─────────────────────────────────────────────────────
-  function labelFillColorExpr() {
+  // We render off feature-state (per-id client-side state) rather than off
+  // feature properties baked into the tile. setFeatureState lets us flip
+  // any building's render state without re-loading or rebuilding the
+  // source — exactly the right semantics for an interactive labeler.
+  // The expression returns -1 (a sentinel) when no _label/_pred is set
+  // for a feature, and the fallback color is used.
+  function fillColorExpr(mode) {
+    const key = mode === "predict" ? "_pred" : "_label";
     return [
       "case",
-      ["==", ["get", "_label"], CLASS_INTACT], CLASS_COLORS[CLASS_INTACT],
-      ["==", ["get", "_label"], CLASS_DAMAGED], CLASS_COLORS[CLASS_DAMAGED],
-      ["==", ["get", "_label"], CLASS_CLOUDY], CLASS_COLORS[CLASS_CLOUDY],
-      UNLABELED_COLOR,
-    ];
-  }
-  function predictFillColorExpr() {
-    return [
-      "case",
-      ["==", ["get", "_pred"], CLASS_INTACT], CLASS_COLORS[CLASS_INTACT],
-      ["==", ["get", "_pred"], CLASS_DAMAGED], CLASS_COLORS[CLASS_DAMAGED],
-      ["==", ["get", "_pred"], CLASS_CLOUDY], CLASS_COLORS[CLASS_CLOUDY],
+      ["==", ["feature-state", key], CLASS_INTACT], CLASS_COLORS[CLASS_INTACT],
+      ["==", ["feature-state", key], CLASS_DAMAGED], CLASS_COLORS[CLASS_DAMAGED],
+      ["==", ["feature-state", key], CLASS_CLOUDY], CLASS_COLORS[CLASS_CLOUDY],
       UNLABELED_COLOR,
     ];
   }
@@ -411,8 +512,7 @@ const InteractiveLabeler = () => {
   useEffect(() => {
     if (!fillLayerRef.current) return;
     fillLayerRef.current.setOptions({
-      fillColor:
-        viewMode === "predict" ? predictFillColorExpr() : labelFillColorExpr(),
+      fillColor: fillColorExpr(viewMode),
     });
     if (viewMode === "predict") maybeTrainAndPredict();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -429,44 +529,46 @@ const InteractiveLabeler = () => {
     return props ? props.id : null;
   }
 
-  // Lightweight render features: geometry + id + render state only (the heavy
-  // f_* columns live in featuresRef, never on the map).
-  function buildRenderCollection() {
-    return {
-      type: "FeatureCollection",
-      features: featuresRef.current.map((f) => {
-        const id = f.properties?.id;
-        const labeled = labeledMapRef.current[id];
-        const pred = predictionsMapRef.current[id];
-        return {
-          type: "Feature",
-          id,
-          geometry: f.geometry,
-          properties: {
-            id,
-            _label: labeled ? labeled.label : -1,
-            _pred: pred != null ? pred : -1,
-          },
-        };
-      }),
-    };
+  // Push per-building render state into the map via setFeatureState. Atlas
+  // v3 (Mapbox-GL fork) supports this on VectorTileSource as long as the
+  // source was configured with promoteId. State persists across the
+  // session even when the originating tile unloads / reloads.
+  function setFeatureLabel(id, label) {
+    const map = mapRef.current;
+    const source = vectorTileSourceRef.current;
+    if (!map || !source || id == null) return;
+    map.setFeatureState(
+      { source: source.getId(), sourceLayer: PMTILES_SOURCE_LAYER, id },
+      { _label: label }
+    );
   }
-
-  function setShapeProp(id, key, value) {
-    const ds = datasourceRef.current;
-    if (!ds) return;
-    const shape = ds.getShapeById(id);
-    if (shape) {
-      shape.setProperties({ ...shape.getProperties(), [key]: value });
+  function setFeaturePred(id, pred) {
+    const map = mapRef.current;
+    const source = vectorTileSourceRef.current;
+    if (!map || !source || id == null) return;
+    map.setFeatureState(
+      { source: source.getId(), sourceLayer: PMTILES_SOURCE_LAYER, id },
+      { _pred: pred }
+    );
+  }
+  function clearFeatureLabel(id) {
+    const map = mapRef.current;
+    const source = vectorTileSourceRef.current;
+    if (!map || !source || id == null) return;
+    // Atlas inherits the Mapbox API: removeFeatureState clears the key.
+    if (typeof map.removeFeatureState === "function") {
+      map.removeFeatureState(
+        { source: source.getId(), sourceLayer: PMTILES_SOURCE_LAYER, id },
+        "_label"
+      );
     } else {
-      // Fallback if the shape can't be addressed by id — re-sync the whole
-      // (lightweight) collection from the label/prediction maps.
-      rebuildDatasource();
+      // Fallback: explicitly set to the sentinel.
+      setFeatureLabel(id, -1);
     }
   }
 
   function recordLabel(id, cls) {
-    const feature = featuresRef.current.find((f) => f.properties?.id === id);
+    const feature = loadedFeaturesRef.current.get(id);
     if (!feature) return false;
     const vec = extractFeatureVector(
       feature.properties,
@@ -478,19 +580,21 @@ const InteractiveLabeler = () => {
 
   function labelBuilding(id, cls) {
     if (!recordLabel(id, cls)) return;
-    setShapeProp(id, "_label", cls);
+    setFeatureLabel(id, cls);
     refreshCounts();
     if (viewModeRef.current === "predict") maybeTrainAndPredict();
   }
 
-  // Batch label (Ctrl+drag box-select): record all, then one rebuild.
+  // Batch label (Ctrl+drag box-select): record all, push each to feature-state.
   function labelBuildings(ids, cls) {
     let n = 0;
     for (const id of ids) {
-      if (id != null && recordLabel(id, cls)) n++;
+      if (id != null && recordLabel(id, cls)) {
+        setFeatureLabel(id, cls);
+        n++;
+      }
     }
     if (n === 0) return;
-    rebuildDatasource();
     refreshCounts();
     setStatus(`Labeled ${n} buildings.`);
     if (viewModeRef.current === "predict") maybeTrainAndPredict();
@@ -498,7 +602,7 @@ const InteractiveLabeler = () => {
 
   function clearLabel(id) {
     delete labeledMapRef.current[id];
-    setShapeProp(id, "_label", -1);
+    clearFeatureLabel(id);
     refreshCounts();
   }
 
@@ -544,10 +648,13 @@ const InteractiveLabeler = () => {
       );
       if (metrics) setMetrics({ ...metrics, mode: "holdout" });
 
-      // Predict for every building with a valid feature vector.
+      // Predict for every loaded building with a valid feature vector.
+      // (Viewport-scoped: only buildings whose tiles the user has
+      // panned/zoomed over. Save runs the full-coverage pass — see
+      // handleSave.)
       const ids = [];
       const matrix = [];
-      for (const f of featuresRef.current) {
+      for (const f of loadedFeaturesRef.current.values()) {
         const vec = extractFeatureVector(
           f.properties,
           featureKeysRef.current
@@ -559,12 +666,15 @@ const InteractiveLabeler = () => {
       if (matrix.length === 0) return;
 
       const { predictions, backend } = await predictClasses(entries, matrix);
-      const predMap = {};
-      for (let i = 0; i < ids.length; i++) predMap[ids[i]] = predictions[i];
-      predictionsMapRef.current = predMap;
+      const predMap = predictionsMapRef.current;
+      for (let i = 0; i < ids.length; i++) {
+        predMap[ids[i]] = predictions[i];
+        // Push each prediction into feature-state so the render updates
+        // without rebuilding any source. setFeatureState is per-id and
+        // persistent for the session.
+        setFeaturePred(ids[i], predictions[i]);
+      }
       setBackend(backend);
-      // One bulk datasource rebuild (instead of N per-shape updates).
-      rebuildDatasource();
       setPredictedCount(ids.length);
       setStatus(
         `Predicted ${ids.length} buildings (${entries.length} labels, ${backend}).`
@@ -576,15 +686,6 @@ const InteractiveLabeler = () => {
         maybeTrainAndPredict();
       }
     }
-  }
-
-  // Re-add all features with current _label / _pred baked in. Used after a
-  // bulk prediction; single-building label clicks use setShapeProp instead.
-  function rebuildDatasource() {
-    const ds = datasourceRef.current;
-    if (!ds) return;
-    ds.clear();
-    ds.add(buildRenderCollection());
   }
 
   function extractCentroid(feature) {
@@ -623,6 +724,15 @@ const InteractiveLabeler = () => {
   }, []);
 
   // ── Save: labels + predictions ────────────────────────────────────────────
+  //
+  // INTERIM IMPLEMENTATION — saves only the predictions for buildings the
+  // user has actually loaded by panning/zooming over their tiles. The next
+  // commit will rewire this to:
+  //   1. Download the full embeddings GeoJSON
+  //   2. Train on labels
+  //   3. Predict for every building (in batches, with a progress UI)
+  //   4. Write a complete predictions GPKG
+  // so the saved output is always full-coverage regardless of viewport.
   async function handleSave() {
     setIsSaving(true);
     setIsLoading(true, "Saving predictions…");
@@ -631,10 +741,13 @@ const InteractiveLabeler = () => {
       // Overture id). This is SEPARATE from the layer-scoped Building
       // Validation store, so the two workflows don't overwrite each other.
       const labels = {};
-      for (const f of featuresRef.current) {
-        const entry = labeledMapRef.current[f.properties?.id];
-        if (!entry) continue;
-        const overtureId = f.properties?.overture_id ?? f.properties?.id;
+      for (const [id, entry] of Object.entries(labeledMapRef.current)) {
+        const f = loadedFeaturesRef.current.get(
+          // Object.keys coerces numeric ids to strings; the source map is
+          // keyed by whatever the tile feature exposes (typically number).
+          Number.isNaN(Number(id)) ? id : Number(id)
+        ) || loadedFeaturesRef.current.get(id);
+        const overtureId = f?.properties?.overture_id ?? id;
         labels[overtureId] = {
           id: overtureId,
           label: CLASS_TO_VALIDATION[entry.label],
@@ -649,15 +762,18 @@ const InteractiveLabeler = () => {
       });
 
       // 2. Per-building predictions -> gpkg on the model (row-index id).
-      const predictions = featuresRef.current.map((f) => {
+      // Only writes predictions for loaded buildings; the full-coverage
+      // version lands in a subsequent commit.
+      const predictions = [];
+      for (const f of loadedFeaturesRef.current.values()) {
         const id = f.properties?.id;
         const cls = predictionsMapRef.current[id];
-        return {
+        predictions.push({
           id,
           damaged: cls === CLASS_DAMAGED ? 1 : 0,
           unknown: cls === CLASS_CLOUDY ? 1.0 : 0.0,
-        };
-      });
+        });
+      }
       await apiPut("PutBuildingPredictions", {
         projectId,
         imageLayerId,
