@@ -19,12 +19,13 @@ import {
   Text,
   Toggle,
 } from "@fluentui/react";
-import { Protocol } from "pmtiles";
+import { PMTiles, Protocol } from "pmtiles";
 import { apiGet, apiPut } from "../../util/api";
 import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
 } from "../../util/azureMapsAuth";
+import { toBrowserBlobUrl } from "../../util/blobUrl";
 import { AppContext } from "../../AppContext.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 import {
@@ -208,6 +209,28 @@ const InteractiveLabeler = () => {
         "No PMTiles available for this model — embedding workflow has not produced building tiles."
       );
     }
+    // In dev compose, pmtilesUrl uses the docker-internal `azurite` hostname
+    // that the browser can't resolve. Most blob fetches in the UI go through
+    // api-proxy/titiler server-side and don't hit this — pmtiles is the
+    // exception (browser does direct range reads). Rewrites to localhost in
+    // dev, no-op in prod.
+    const browserPmtilesUrl = toBrowserBlobUrl(pmtilesUrl);
+
+    // Read the PMTiles header up front to:
+    //  - position the camera at the archive's bounds (otherwise the map
+    //    sits at [0,0] zoom 3 and the user sees nothing — there are no
+    //    tiles to render in mid-ocean and no obvious cue to pan to Hawaii).
+    //  - hand min/maxSourceZoom to the VectorTileSource so it stops
+    //    requesting tiles outside the archive's zoom range.
+    // The header is a single 16 KB byte-range read, cached by pmtiles' shared
+    // promise cache so the source's subsequent reads reuse it.
+    let pmtilesHeader = null;
+    try {
+      const pm = new PMTiles(browserPmtilesUrl);
+      pmtilesHeader = await pm.getHeader();
+    } catch (e) {
+      console.warn("Failed to read PMTiles header (continuing):", e);
+    }
 
     // Restore this model's previously-saved interactive labels (separate from
     // the Building Validation store) so reopening the labeler resumes work.
@@ -226,8 +249,20 @@ const InteractiveLabeler = () => {
     }
 
     const map = new window.atlas.Map(mapContainerRef.current, {
-      center: [0, 0],
-      zoom: 3,
+      // If we have PMTiles bounds, pre-position the camera there so the
+      // archive's tiles are in the initial viewport. Falls back to a global
+      // view only when the header read failed (broken/missing pmtiles).
+      ...(pmtilesHeader
+        ? {
+            bounds: [
+              pmtilesHeader.minLon,
+              pmtilesHeader.minLat,
+              pmtilesHeader.maxLon,
+              pmtilesHeader.maxLat,
+            ],
+            padding: 50,
+          }
+        : { center: [0, 0], zoom: 3 }),
       maxPitch: 0,
       pitch: 0,
       style: isAzureMapsPlaceholder ? "blank" : "satellite",
@@ -272,10 +307,18 @@ const InteractiveLabeler = () => {
       // big GeoJSON. Promote `id` so per-feature setFeatureState calls
       // can address buildings by their stable id.
       const source = new window.atlas.source.VectorTileSource(null, {
-        tiles: [`pmtiles://${pmtilesUrl}/{z}/{x}/{y}`],
+        tiles: [`pmtiles://${browserPmtilesUrl}/{z}/{x}/{y}`],
         promoteId: "id",
-        // Max zoom that tippecanoe wrote (we used `-zg` which auto-picks).
-        // Atlas overzooms above this so we don't need to set it precisely.
+        // Cap the zoom range to what's actually in the archive — without
+        // this, Atlas requests tiles at zooms tippecanoe never wrote, gets
+        // 204/404 back from pmtiles' "no tile" branch on every miss, and
+        // the user sees nothing while it spams requests at z<minZoom.
+        ...(pmtilesHeader
+          ? {
+              minSourceZoom: pmtilesHeader.minZoom,
+              maxSourceZoom: pmtilesHeader.maxZoom,
+            }
+          : {}),
       });
       map.sources.add(source);
       vectorTileSourceRef.current = source;
