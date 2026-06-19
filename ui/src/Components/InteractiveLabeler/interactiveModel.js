@@ -237,58 +237,63 @@ export function stratifiedSplit(entries, testFrac = 0.25) {
   return { train, test };
 }
 
-// Stratified k-fold cross-validation estimate of precision / recall / F1 for
-// the Damaged class (class 1 = positive, everything else = negative). Returns
-// null if there aren't enough labels to form k folds with both classes.
-export async function crossValidateDamaged(entries, k = 5, damagedClass = 1) {
+// Single-split holdout estimate of precision / recall / F1 for the Damaged
+// class (class 1 = positive, everything else = negative). Trains one OvR
+// model on the stratified majority split, evaluates on the held-out
+// minority split. Cheaper than k-fold (one OvR training instead of k) so
+// it can run on every label click without blocking the prediction
+// pipeline. Returns null when the data is too thin to form a meaningful
+// split (e.g. only one class, or fewer than 2 of either class).
+//
+// Note: metrics will fluctuate click-to-click because the split is
+// re-randomized. That's the cost of getting fresh metrics on every
+// retrain without paying for full CV. The dominant trend across a
+// labeling session remains informative.
+export async function holdoutMetricsDamaged(
+  entries,
+  testFrac = 0.2,
+  damagedClass = 1
+) {
   const usable = entries.filter((e) => isValidVector(e.features));
   const pos = usable.filter((e) => e.label === damagedClass);
   const neg = usable.filter((e) => e.label !== damagedClass);
-  // Need at least k of each so every fold can hold one of each class.
-  const folds = Math.max(2, Math.min(k, pos.length, neg.length));
   if (pos.length < 2 || neg.length < 2 || usable.length < 4) return null;
 
-  // Assign each class's samples round-robin across folds (stratified).
-  const assign = (arr) => {
-    const shuffled = [...arr].sort(() => Math.random() - 0.5);
-    const buckets = Array.from({ length: folds }, () => []);
-    shuffled.forEach((e, i) => buckets[i % folds].push(e));
-    return buckets;
-  };
-  const posF = assign(pos);
-  const negF = assign(neg);
+  const { train, test } = stratifiedSplit(usable, testFrac);
+  // The stratified split guarantees at least 1 test sample per class;
+  // we also need at least one positive AND one negative in train so the
+  // OvR pass has both classes.
+  const trainClasses = new Set(train.map((e) => e.label));
+  if (trainClasses.size < 2 || test.length === 0) return null;
+
+  const { predictions: preds } = await predictClasses(
+    train,
+    test.map((d) => d.features)
+  );
 
   let tp = 0;
   let fp = 0;
   let fn = 0;
-  for (let i = 0; i < folds; i++) {
-    const test = [...posF[i], ...negF[i]];
-    const train = [];
-    for (let j = 0; j < folds; j++) {
-      if (j === i) continue;
-      train.push(...posF[j], ...negF[j]);
-    }
-    // A fold's training set must contain both classes to train a model.
-    const trainClasses = new Set(train.map((e) => e.label));
-    if (trainClasses.size < 2 || test.length === 0) continue;
-
-    const { predictions: preds } = await predictClasses(
-      train,
-      test.map((d) => d.features)
-    );
-    test.forEach((e, idx) => {
-      const predDamaged = preds[idx] === damagedClass;
-      const isDamaged = e.label === damagedClass;
-      if (predDamaged && isDamaged) tp++;
-      else if (predDamaged && !isDamaged) fp++;
-      else if (!predDamaged && isDamaged) fn++;
-    });
-  }
+  test.forEach((e, idx) => {
+    const predDamaged = preds[idx] === damagedClass;
+    const isDamaged = e.label === damagedClass;
+    if (predDamaged && isDamaged) tp++;
+    else if (predDamaged && !isDamaged) fp++;
+    else if (!predDamaged && isDamaged) fn++;
+  });
 
   const precision = tp / (tp + fp) || 0;
   const recall = tp / (tp + fn) || 0;
   const f1 = (2 * precision * recall) / (precision + recall) || 0;
-  return { precision, recall, f1, folds, nPos: pos.length, nNeg: neg.length };
+  return {
+    precision,
+    recall,
+    f1,
+    nTrain: train.length,
+    nTest: test.length,
+    nPos: pos.length,
+    nNeg: neg.length,
+  };
 }
 
 export function computeClassMetrics(preds, labels) {

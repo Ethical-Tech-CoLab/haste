@@ -30,9 +30,9 @@ import {
   CLASS_CLOUDY,
   CLASS_DAMAGED,
   CLASS_INTACT,
-  crossValidateDamaged,
   detectFeatureKeys,
   extractFeatureVector,
+  holdoutMetricsDamaged,
   isValidVector,
   predictClasses,
 } from "./interactiveModel.js";
@@ -534,9 +534,15 @@ const InteractiveLabeler = () => {
     trainBusyRef.current = true;
     setStatus("Training…");
     try {
-      // Cross-validated precision/recall/F1 for the Damaged class.
-      const cv = await crossValidateDamaged(entries, 5, CLASS_DAMAGED);
-      if (cv) setMetrics(cv);
+      // Single 80/20 holdout for the metrics panel — runs one OvR pass
+      // instead of k full passes, so it scales linearly with feature
+      // count and stays cheap enough to refresh on every label click.
+      const metrics = await holdoutMetricsDamaged(
+        entries,
+        0.2,
+        CLASS_DAMAGED
+      );
+      if (metrics) setMetrics({ ...metrics, mode: "holdout" });
 
       // Predict for every building with a valid feature vector.
       const ids = [];
@@ -773,7 +779,7 @@ const InteractiveLabeler = () => {
               }}
             >
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                Damaged class ({metrics.folds}-fold CV)
+                Damaged class (80/20 holdout)
               </div>
               <div style={{ display: "flex", gap: 12 }}>
                 <span>
