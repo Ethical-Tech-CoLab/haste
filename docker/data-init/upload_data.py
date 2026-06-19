@@ -7,7 +7,11 @@ This script waits for Azurite to be ready and then uploads the configuration fil
 import os
 import time
 import sys
-from azure.storage.blob import BlobServiceClient, PublicAccess
+from azure.storage.blob import (
+    BlobServiceClient,
+    CorsRule,
+    PublicAccess,
+)
 from azure.storage.queue import QueueServiceClient
 from azure.core.exceptions import ResourceExistsError
 
@@ -67,6 +71,39 @@ def create_queues():
         
     return success_count == len(queues_to_create)
 
+def configure_blob_cors():
+    """Allow cross-origin GETs on Azurite blobs from the dev-stack UI.
+
+    The Interactive Labeler fetches PMTiles archives via byte-range HTTP
+    requests directly from the browser (pmtiles.js). With the UI on
+    localhost:4280 and Azurite on localhost:10000, this is cross-origin
+    and gets blocked unless Azurite sends Access-Control-Allow-Origin.
+
+    Azurite respects Blob Service CORS rules set via Set Service Properties,
+    so we configure a permissive rule once at data-init time. The same
+    config also unblocks any future direct-browser blob reads.
+    """
+    print("Configuring blob CORS for browser fetches...")
+    try:
+        bsc = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+        bsc.set_service_properties(
+            cors=[
+                CorsRule(
+                    allowed_origins=["*"],
+                    allowed_methods=["GET", "HEAD", "OPTIONS"],
+                    allowed_headers=["*"],
+                    exposed_headers=["*"],
+                    max_age_in_seconds=3600,
+                )
+            ]
+        )
+        print("✓ Blob CORS configured (allow *)")
+        return True
+    except Exception as e:
+        print(f"ERROR configuring blob CORS: {e}")
+        return False
+
+
 def upload_file_to_blob(container_name, blob_name, file_path):
     """Upload a local file to Azurite as a blob."""
     try:
@@ -115,7 +152,13 @@ def main():
     if not create_queues():
         print("Failed to create all queues. Exiting.")
         sys.exit(1)
-    
+
+    print("\n--- Configuring Blob CORS ---")
+    if not configure_blob_cors():
+        # Non-fatal: existing data still loads, but the Interactive Labeler's
+        # browser-side PMTiles fetch will be CORS-blocked.
+        print("Continuing despite CORS configuration failure.")
+
     print("\n--- Uploading Blob Files ---")
     files_to_upload = [
         ("data", "config_admin_settings.json", "/data/config_admin_settings.json"),
