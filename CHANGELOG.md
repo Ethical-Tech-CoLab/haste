@@ -7,6 +7,13 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ---
 
+## [v1.4.7] — Hotfix: non-admin project creation
+
+### Fixed
+- **Non-administrator users couldn't open the Create Project modal** — `createComponentDefaultState` made a `GetAdminSettings` call whose result was never used (the function reads `staticSettings` from local JSON instead). That dead call returned HTTP 403 for non-admin users, blocking the modal from opening. Removed the unused call. ([#53](https://github.com/microsoft/haste/pull/53))
+
+---
+
 ## [v1.4.6] — Building validation & assessment, custom footprints
 
 ### Added
