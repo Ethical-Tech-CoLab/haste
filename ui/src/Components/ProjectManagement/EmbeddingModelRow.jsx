@@ -23,9 +23,8 @@ import { limitTextLength } from "../../util/conversion";
 
 // Friendly per-row label for the embedding backbone column. The Model schema
 // stores ``embeddingModel`` as the raw backbone name passed to the workflow
-// (e.g. "mosaiks", "dinov2_vits14"); these display strings keep the parameter
-// dim visible inline so users can tell at a glance which row produced 1024-dim
-// features vs DINOv2's 768-dim.
+// (e.g. "mosaiks", "dinov2_vits14"); the display strings here are intentionally
+// short — full run parameters are surfaced in the Status Messages info box.
 //
 // Keep in sync with EMBEDDING_MODEL_OPTIONS in CreateEditEmbeddingModal.jsx
 // and build_embedding_model() in hastelib/src/hastegeo/workflows/embed_buildings.py.
@@ -36,19 +35,29 @@ const EMBEDDING_MODEL_LABELS = {
   dinov2_vitl14: "DINOv2 ViT-L/14",
 };
 
-function formatEmbeddingModel(model) {
+function embeddingModelLabel(model) {
   const name = model.embeddingModel || "mosaiks";
-  const label = EMBEDDING_MODEL_LABELS[name] || name;
-  // MOSAIKS exposes a configurable output dim — surface it (and resize factor
-  // since the two together fully describe the run). DINOv2 dim is fixed per
-  // variant and already implied by the label, so just keep it clean.
-  if (name === "mosaiks") {
-    const parts = [];
-    if (model.numFeatures) parts.push(`${model.numFeatures} feats`);
-    if (model.resizeFactor) parts.push(`${model.resizeFactor}x resize`);
-    return parts.length ? `${label} (${parts.join(", ")})` : label;
+  return EMBEDDING_MODEL_LABELS[name] || name;
+}
+
+// Run parameters surfaced in the Status Messages info box. MOSAIKS has a
+// configurable output dim that is not implied by the backbone label, so it
+// gets the extra Number-of-features row; DINOv2 variants have a fixed
+// per-variant dim so they don't.
+function embeddingInfoMetadata(model) {
+  const items = [
+    { label: "Embedding model", value: embeddingModelLabel(model) },
+  ];
+  if ((model.embeddingModel || "mosaiks") === "mosaiks" && model.numFeatures) {
+    items.push({ label: "Number of features", value: String(model.numFeatures) });
   }
-  return label;
+  if (model.resizeFactor) {
+    items.push({ label: "Resize factor", value: `${model.resizeFactor}x` });
+  }
+  if (model.batchSize) {
+    items.push({ label: "Batch size", value: String(model.batchSize) });
+  }
+  return items;
 }
 
 const EmbeddingModelRow = ({
@@ -161,12 +170,7 @@ const EmbeddingModelRow = ({
         </Text>
       </td>
       <td className="pe-3 custom-text-no-wrap">
-        <TooltipHost
-          content={`Backbone: ${model.embeddingModel || "mosaiks"}`}
-          delay={2}
-        >
-          <Text variant="medium">{formatEmbeddingModel(model)}</Text>
-        </TooltipHost>
+        <Text variant="medium">{embeddingModelLabel(model)}</Text>
       </td>
       <td className="pe-3 custom-text-no-wrap d-flex align-items-center">
         <StatusIndicator
@@ -176,7 +180,8 @@ const EmbeddingModelRow = ({
           status={model.status}
           statusMessage={model.statusMessage}
           id={`singleEmbeddingStatus${index}`}
-          prefix={formatEmbeddingModel(model)}
+          prefix={embeddingModelLabel(model)}
+          infoMetadata={embeddingInfoMetadata(model)}
         />
       </td>
       <td className="pe-3 custom-text-no-wrap">
