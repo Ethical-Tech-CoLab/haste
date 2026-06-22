@@ -2155,10 +2155,18 @@ async def PutRunEmbeddingQueueMessage(
             output.creationDate = MetadataUtils.get_timestamp()
         if output.name:
             output.name = output.name.replace(" ", "-")
-        # Embedding defaults (a params modal will set these later).
+        # Embedding defaults: backbone choice + per-backbone params. MOSAIKS
+        # gets the legacy 1024-feat / 4x-resize defaults; DINOv2 ignores
+        # numFeatures (output dim is fixed per variant) and we keep
+        # resizeFactor at 1 by default since DINOv2 patches are already a
+        # different stride than MOSAIKS blocks.
         output.embeddingModel = output.embeddingModel or "mosaiks"
-        output.resizeFactor = output.resizeFactor or 4
-        output.numFeatures = output.numFeatures or 1024
+        if output.embeddingModel == "mosaiks":
+            output.resizeFactor = output.resizeFactor or 4
+            output.numFeatures = output.numFeatures or 1024
+        else:
+            output.resizeFactor = output.resizeFactor or 1
+            output.numFeatures = output.numFeatures or 0
 
         output = await asyncio.to_thread(
             EmbeddingPreprocessor(output).send_to_queue

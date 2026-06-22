@@ -445,6 +445,9 @@ class Model(BaseModel):
     # segmentation model. It reuses gpkgUrl for the saved per-building
     # predictions so the existing Validation/Assessment reports work.
     modelType: Optional[str] = Field(default="trained")
+    # Embedding backbone name: "mosaiks" (default) or a DINOv2 variant
+    # ("dinov2_vits14", "dinov2_vitb14", "dinov2_vitl14"). DINOv2 variants
+    # ignore numFeatures (output dim is fixed by the variant).
     embeddingModel: Optional[str] = Field(default=None)
     resizeFactor: Optional[int] = Field(default=None)
     numFeatures: Optional[int] = Field(default=None)

@@ -33,7 +33,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Dict, Optional
 
 import geopandas as gpd
 import numpy as np
@@ -63,6 +63,9 @@ logger.info("Executing %s", __file__)
 # ---------------------------------------------------------------------------
 # Constants (must match the reference embed_buildings.py)
 # ---------------------------------------------------------------------------
+# MOSAIKS token stride (RCF block_size). Kept as the canonical default so the
+# pure-python helpers (compute_crop_windows, rasterize_building_in_token_grid)
+# behave identically to the pre-DINOv2 module when called positionally.
 TOKEN_STRIDE = 16
 DEFAULT_MOSAIKS_FEATS = 1024
 DEFAULT_MOSAIKS_KERNEL_SIZE = 7
@@ -77,6 +80,12 @@ DEFAULT_MAX_CROP_PX = 192
 # Cap the conv-activation tensor elements per forward so the batch size adapts
 # down for large crops (keeps a batch's peak allocation in the low-GB range).
 MAX_ACT_ELEMENTS = 2.5e8
+
+# Where to look for pre-baked torch.hub assets (DINOv2 source + weights). The
+# training docker image populates this at build time so workflow runs don't
+# touch the internet. Falls back to the default torch.hub cache if missing
+# (useful for local dev runs outside the docker image).
+TORCH_HUB_CACHE_DIR = "/opt/torch-hub-cache/hub"
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +198,132 @@ class BatchedMosaiksWrapper(nn.Module):
         return feats
 
 
+class _DinoV2PatchTokensWrapper(nn.Module):
+    """Thin wrapper that returns DINOv2 patch tokens as ``(B, H*W, D)``.
+
+    DINOv2 is loaded via ``torch.hub`` from a pre-baked cache (so Azure Batch
+    nodes don't reach out to GitHub at runtime). The model's
+    ``forward_features`` returns a dict with ``x_norm_patchtokens``: a
+    ``(B, N_patches, D)`` tensor of L2-normalized patch features. We reshape
+    it back to the same layout MOSAIKS uses (one token per grid cell, row-major)
+    so the downstream masking/pooling code is shared.
+
+    Build inputs must be ``(B, 3, H, W)`` with H and W both multiples of 14
+    (the DINOv2 patch size). ``embed_footprints`` enforces this by rounding
+    each batch's interpolated model input up to a multiple of ``patch_size``.
+    """
+
+    PATCH_SIZE = 14
+
+    # Per-variant output feature dim (the ``num_features`` attribute of the
+    # underlying DINOv2 ViT — kept as a constant lookup so callers don't need
+    # the model handle to know the expected dim).
+    VARIANT_DIMS = {
+        "dinov2_vits14": 384,
+        "dinov2_vitb14": 768,
+        "dinov2_vitl14": 1024,
+    }
+
+    def __init__(self, variant: str):
+        super().__init__()
+        if variant not in self.VARIANT_DIMS:
+            raise ValueError(
+                f"Unknown DINOv2 variant {variant!r}. "
+                f"Supported: {sorted(self.VARIANT_DIMS)}"
+            )
+        self.variant = variant
+        # Prefer a pre-baked hub cache (training docker image populates
+        # /opt/torch-hub-cache/hub). Fall back to torch.hub's default cache
+        # for local dev runs outside the image.
+        if os.path.isdir(TORCH_HUB_CACHE_DIR):
+            torch.hub.set_dir(TORCH_HUB_CACHE_DIR)
+        # ``skip_validation=True`` avoids a GitHub API call to check tag/SHA
+        # state when the cached zip is already present.
+        self.backbone = torch.hub.load(
+            "facebookresearch/dinov2",
+            variant,
+            trust_repo=True,
+            skip_validation=True,
+        ).eval()
+
+    @torch.no_grad()
+    def forward(self, x: Tensor) -> Tensor:
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+        assert x.dim() == 4 and x.size(1) == 3
+        if x.shape[-1] % self.PATCH_SIZE or x.shape[-2] % self.PATCH_SIZE:
+            raise ValueError(
+                f"DINOv2 input dims must be multiples of {self.PATCH_SIZE}; "
+                f"got {tuple(x.shape[-2:])}"
+            )
+        out = self.backbone.forward_features(x)
+        # (B, num_patches, D) — num_patches = (H/P) * (W/P), row-major.
+        return out["x_norm_patchtokens"]
+
+
+# ---------------------------------------------------------------------------
+# Embedding-model factory (used by embed_footprints to dispatch on
+# pipeline.model). Returns a uniform handle so the cropping/masking/pooling
+# code paths are shared across model families.
+# ---------------------------------------------------------------------------
+def build_embedding_model(
+    model_name: str,
+    *,
+    num_feats: int = DEFAULT_MOSAIKS_FEATS,
+    kernel_size: int = DEFAULT_MOSAIKS_KERNEL_SIZE,
+) -> Dict[str, object]:
+    """Build the embedding model and return its uniform inference handle.
+
+    ``model_name`` is one of:
+
+    - ``"mosaiks"``: torchgeo RCF with 16x16 block pooling. ``num_feats`` and
+      ``kernel_size`` configurable (default 1024, 7). Per-band normalization
+      is the 3-channel mean/std from the original MOSAIKS reference impl.
+    - ``"dinov2_vits14"`` / ``"dinov2_vitb14"`` / ``"dinov2_vitl14"``:
+      DINOv2 ViT patch tokens (14x14 patches). ``num_feats`` is ignored — the
+      output dim is fixed by the variant (384 / 768 / 1024). Normalization is
+      the ImageNet mean/std DINOv2 was trained with.
+
+    Returns a dict with:
+
+    - ``model``: callable ``(B, 3, H, W) -> (B, N_tokens, D)``
+    - ``patch_size``: pixels per token side in MODEL input space (16 or 14)
+    - ``feat_dim``: D
+    - ``img_mean`` / ``img_std``: ``(1, 3, 1, 1)`` per-channel normalization
+      tensors that the workflow applies before resizing/forward.
+    """
+    if model_name == "mosaiks":
+        model: Callable[[Tensor], Tensor] = BatchedMosaiksWrapper(
+            features=num_feats,
+            kernel_size=kernel_size,
+            block_size=TOKEN_STRIDE,
+        )
+        return {
+            "model": model,
+            "patch_size": TOKEN_STRIDE,
+            # torchgeo's RCF halves the per-filter count internally so the
+            # pos/neg ReLU concat lands back at exactly ``features`` channels.
+            "feat_dim": int(num_feats),
+            # Reference embed_buildings.py per-channel stats.
+            "img_mean": torch.tensor([0.430, 0.411, 0.296]).view(1, 3, 1, 1),
+            "img_std": torch.tensor([0.213, 0.156, 0.143]).view(1, 3, 1, 1),
+        }
+    if model_name.startswith("dinov2_"):
+        backbone = _DinoV2PatchTokensWrapper(model_name)
+        return {
+            "model": backbone,
+            "patch_size": _DinoV2PatchTokensWrapper.PATCH_SIZE,
+            "feat_dim": _DinoV2PatchTokensWrapper.VARIANT_DIMS[model_name],
+            # ImageNet mean/std — what DINOv2 was pre-trained with.
+            "img_mean": torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1),
+            "img_std": torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1),
+        }
+    raise ValueError(
+        f"Unknown embedding model {model_name!r}. "
+        "Supported: mosaiks, dinov2_vits14, dinov2_vitb14, dinov2_vitl14."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Geometry / crop helpers (ported verbatim from the reference)
 # ---------------------------------------------------------------------------
@@ -205,6 +340,7 @@ def compute_crop_windows(
     context_px: int = DEFAULT_CONTEXT_PX,
     resize_factor: int = 1,
     max_crop_px: int = DEFAULT_MAX_CROP_PX,
+    patch_size: int = TOKEN_STRIDE,
 ) -> list[dict]:
     """Compute a token-aligned pixel crop window per building.
 
@@ -214,9 +350,16 @@ def compute_crop_windows(
     A crop wider/taller than ``max_crop_px`` source pixels is centered and
     capped so a single large footprint can't exhaust GPU/CPU memory at the
     upscaled resolution.
+
+    ``patch_size`` is the model's token side length (pixels per token in MODEL
+    input space): 16 for MOSAIKS, 14 for DINOv2. The source-pixel padding
+    ``grain`` (``patch_size // resize_factor``) keeps the upscaled model input
+    aligned to whole tokens for the common case where ``resize_factor`` evenly
+    divides ``patch_size``; for the misaligned case ``embed_footprints``
+    additionally rounds the model input up to a ``patch_size`` multiple.
     """
     inv_transform = ~raster_transform
-    grain = max(1, TOKEN_STRIDE // resize_factor)
+    grain = max(1, patch_size // resize_factor)
     crops = []
 
     for idx, geom in zip(footprints.index, footprints.geometry):
@@ -288,9 +431,15 @@ def rasterize_building_in_token_grid(
     token_h: int,
     token_w: int,
     resize_factor: int = 1,
+    patch_size: int = TOKEN_STRIDE,
 ) -> np.ndarray:
-    """Rasterize a building polygon into the token-resolution grid."""
-    effective_stride = TOKEN_STRIDE / resize_factor
+    """Rasterize a building polygon into the token-resolution grid.
+
+    ``patch_size`` is the model's token side in MODEL pixels (16 for MOSAIKS,
+    14 for DINOv2); the effective stride in SOURCE pixels is
+    ``patch_size / resize_factor``.
+    """
+    effective_stride = patch_size / resize_factor
     token_transform = crop_transform * rasterio.Affine.scale(
         effective_stride, effective_stride
     )
@@ -388,6 +537,7 @@ def embed_footprints(
     image_path: str,
     footprints_path: str,
     *,
+    model_name: str = "mosaiks",
     num_feats: int = DEFAULT_MOSAIKS_FEATS,
     kernel_size: int = DEFAULT_MOSAIKS_KERNEL_SIZE,
     resize_factor: int = DEFAULT_RESIZE_FACTOR,
@@ -397,9 +547,14 @@ def embed_footprints(
     """Embed every building footprint and return a row-aligned GeoDataFrame.
 
     The output has exactly ``len(footprints)`` rows in the footprints file's
-    native order, columns ``f_0..f_{num_feats-1}`` (NaN for buildings outside
+    native order, columns ``f_0..f_{feat_dim-1}`` (NaN for buildings outside
     the raster / with zero tokens), ``emb_px_count``, an integer row-index
     ``id``, the original ``overture_id``, and geometry in EPSG:4326.
+
+    ``model_name`` selects the embedding backbone — see ``build_embedding_model``
+    for the supported list. ``num_feats`` and ``kernel_size`` only apply to
+    the MOSAIKS backbone; DINOv2 variants ignore them (output dim is fixed
+    per variant).
     """
     log_progress(f"Reading footprints from {footprints_path}")
     footprints = gpd.read_file(footprints_path)
@@ -439,6 +594,17 @@ def embed_footprints(
     work = gpd.GeoDataFrame(geometry=geoms_work, crs=raster_crs)
     work.index = footprints.index  # preserve native order indices
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    log_progress(f"Loading {model_name} model on {device}...")
+    handle = build_embedding_model(
+        model_name, num_feats=num_feats, kernel_size=kernel_size
+    )
+    model = handle["model"].to(device)
+    patch_size = int(handle["patch_size"])
+    feat_dim = int(handle["feat_dim"])
+    img_mean = handle["img_mean"]
+    img_std = handle["img_std"]
+
     log_progress("Computing crop windows...")
     crops = compute_crop_windows(
         work,
@@ -447,6 +613,7 @@ def embed_footprints(
         raster_w,
         context_px,
         resize_factor=resize_factor,
+        patch_size=patch_size,
     )
     log_progress(f"{len(crops)} of {n_total} footprints overlap the raster")
 
@@ -456,18 +623,7 @@ def embed_footprints(
         key = (crop["padded_height"], crop["padded_width"])
         size_groups[key].append(crop)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    log_progress(f"Loading mosaiks model ({num_feats} feats) on {device}...")
-    model = BatchedMosaiksWrapper(
-        features=num_feats, kernel_size=kernel_size, block_size=TOKEN_STRIDE
-    ).to(device)
-
-    # Normalization matching the reference embed_buildings.py. Applied on CPU
-    # before the per-batch device transfer in _forward_batch.
-    img_mean = torch.tensor([0.430, 0.411, 0.296]).view(1, 3, 1, 1)
-    img_std = torch.tensor([0.213, 0.156, 0.143]).view(1, 3, 1, 1)
-
-    col_names = column_names(num_feats)
+    col_names = column_names(feat_dim)
     feature_matrix = np.full(
         (n_total, len(col_names)), np.nan, dtype=np.float32
     )
@@ -475,14 +631,17 @@ def embed_footprints(
 
     done = 0
     for (ph, pw), group in sorted(size_groups.items()):
-        model_h = ph * resize_factor
-        model_w = pw * resize_factor
-        token_h = model_h // TOKEN_STRIDE
-        token_w = model_w // TOKEN_STRIDE
+        # Model input must be a multiple of ``patch_size``. For MOSAIKS this
+        # is automatic (grain = patch_size // resize_factor), but for DINOv2
+        # with a resize_factor that doesn't evenly divide 14 we round up.
+        model_h = pad_to_multiple(ph * resize_factor, patch_size)
+        model_w = pad_to_multiple(pw * resize_factor, patch_size)
+        token_h = model_h // patch_size
+        token_w = model_w // patch_size
 
-        # Shrink the batch for large crops so the conv activation stays
-        # within MAX_ACT_ELEMENTS (peak ~ num_feats * model_h * model_w * bs).
-        per_image = max(1, num_feats * model_h * model_w)
+        # Shrink the batch for large crops so the activation tensor stays
+        # within MAX_ACT_ELEMENTS (peak ~ feat_dim * model_h * model_w * bs).
+        per_image = max(1, feat_dim * model_h * model_w)
         eff_bs = max(1, min(batch_size, int(MAX_ACT_ELEMENTS // per_image)))
 
         for batch_start in range(0, len(group), eff_bs):
@@ -495,7 +654,7 @@ def embed_footprints(
                 images[i] = torch.from_numpy(raw[:3].astype(np.float32))
 
             images = (images / 255.0 - img_mean) / img_std
-            if resize_factor > 1:
+            if images.shape[-2] != model_h or images.shape[-1] != model_w:
                 images = F.interpolate(
                     images,
                     size=(model_h, model_w),
@@ -504,9 +663,7 @@ def embed_footprints(
                 )
 
             features = _forward_batch(model, images, device)
-            features = features.numpy().reshape(
-                bs, token_h, token_w, num_feats
-            )
+            features = features.numpy().reshape(bs, token_h, token_w, feat_dim)
 
             for i, crop in enumerate(batch_crops):
                 row_idx = crop["idx"]
@@ -519,7 +676,12 @@ def embed_footprints(
                     )
                 )
                 mask = rasterize_building_in_token_grid(
-                    geom, crop_transform, token_h, token_w, resize_factor
+                    geom,
+                    crop_transform,
+                    token_h,
+                    token_w,
+                    resize_factor,
+                    patch_size=patch_size,
                 )
                 n_valid = int(mask.sum())
                 pixel_counts[row_idx] = n_valid
@@ -555,6 +717,12 @@ def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
         pmtiles_path,
         "-l",
         "buildings",
+        # Bake the row-index `id` into each tile as the MVT feature id. This
+        # gives every footprint a stable, native feature id so the interactive
+        # labeler can drive per-building coloring via map feature-state — both
+        # MapLibre and Azure Maps need this (Azure Maps' VectorTileSource does
+        # not honor client-side promoteId).
+        "--use-attribute-for-id=id",
         "--no-tile-size-limit",
         "--force",
         "--drop-densest-as-needed",
@@ -619,6 +787,7 @@ def main():
         gdf = embed_footprints(
             image_path,
             footprints_path,
+            model_name=str(pipeline.get("model", "mosaiks")),
             num_feats=int(pipeline.get("num_feats", DEFAULT_MOSAIKS_FEATS)),
             kernel_size=int(
                 pipeline.get(

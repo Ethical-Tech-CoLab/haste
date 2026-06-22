@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Modal to customize and launch a building-embedding job (building labeling
-// workflow). Mirrors CreateEditModelTrainingModal — collects the MOSAIKS
-// parameters and POSTs to PutRunEmbeddingQueueMessage.
-import { useContext, useState } from "react";
-import { TextField } from "@fluentui/react";
+// workflow). Mirrors CreateEditModelTrainingModal — collects the embedding
+// backbone + per-backbone parameters and POSTs to PutRunEmbeddingQueueMessage.
+import { useContext, useMemo, useState } from "react";
+import { Dropdown, TextField } from "@fluentui/react";
 import {
   DefaultButton,
   PrimaryButton,
@@ -15,6 +15,30 @@ import { apiPut } from "../util/api";
 import { validateInt } from "../util/validation";
 import { AppContext } from "../AppContext";
 import SectionModal from "./SectionModal";
+
+// Keep this list in sync with build_embedding_model() in
+// hastelib/src/hastegeo/workflows/embed_buildings.py — the backend rejects
+// anything not on its supported list.
+const EMBEDDING_MODEL_OPTIONS = [
+  {
+    key: "mosaiks",
+    text: "MOSAIKS (random conv features)",
+    description:
+      "Fast, untrained random convolution features. Output dim is configurable.",
+  },
+  {
+    key: "dinov2_vits14",
+    text: "DINOv2 ViT-S/14 (384-dim)",
+    description:
+      "Self-supervised ViT trained by Meta — strong general-purpose visual features. ~22M params, 384-dim output.",
+  },
+  {
+    key: "dinov2_vitb14",
+    text: "DINOv2 ViT-B/14 (768-dim)",
+    description:
+      "Larger DINOv2 variant. ~86M params, 768-dim output — slower but often more discriminative than ViT-S.",
+  },
+];
 
 const CreateEditEmbeddingModal = ({
   onClose,
@@ -33,6 +57,7 @@ const CreateEditEmbeddingModal = ({
   const [state, setState] = useState({
     name: "embedding-" + Date.now(),
     nameError: "",
+    embeddingModel: "mosaiks",
     numFeatures: "1024",
     numFeaturesError: "",
     resizeFactor: "4",
@@ -41,14 +66,45 @@ const CreateEditEmbeddingModal = ({
     batchSizeError: "",
   });
 
+  const isMosaiks = state.embeddingModel === "mosaiks";
+  const modelHelp = useMemo(
+    () =>
+      EMBEDDING_MODEL_OPTIONS.find((o) => o.key === state.embeddingModel)
+        ?.description || "",
+    [state.embeddingModel]
+  );
+
   function onField(value, key) {
     setState((s) => ({ ...s, [key]: value }));
   }
 
+  function onModelChange(_e, option) {
+    if (!option) return;
+    // Switching to DINOv2 picks per-backbone defaults that match what the
+    // server-side preprocessor would fill in (resizeFactor=1, no num_feats).
+    setState((s) => {
+      if (option.key === "mosaiks") {
+        return {
+          ...s,
+          embeddingModel: "mosaiks",
+          resizeFactor: s.resizeFactor || "4",
+          numFeatures: s.numFeatures || "1024",
+        };
+      }
+      return {
+        ...s,
+        embeddingModel: option.key,
+        resizeFactor: "1",
+      };
+    });
+  }
+
   async function submit() {
-    const numFeaturesError = validateInt("Number of features", state.numFeatures);
     const resizeFactorError = validateInt("Resize factor", state.resizeFactor);
     const batchSizeError = validateInt("Batch size", state.batchSize);
+    const numFeaturesError = isMosaiks
+      ? validateInt("Number of features", state.numFeatures)
+      : "";
     if (numFeaturesError || resizeFactorError || batchSizeError) {
       setState((s) => ({
         ...s,
@@ -61,17 +117,23 @@ const CreateEditEmbeddingModal = ({
 
     setIsLoading(true, "Starting embedding job...");
     try {
-      await apiPut("PutRunEmbeddingQueueMessage", {
+      const body = {
         projectId,
         imageLayerId: imageLayer.imageLayerId,
         modelType: "embedding",
         name: state.name,
-        embeddingModel: "mosaiks",
-        numFeatures: parseInt(state.numFeatures, 10),
+        embeddingModel: state.embeddingModel,
         resizeFactor: parseInt(state.resizeFactor, 10),
         batchSize: state.batchSize,
         userId: appParams.userId,
-      });
+      };
+      // num_feats is MOSAIKS-only. DINOv2 variants have a fixed output dim
+      // determined by the variant — sending a value would be misleading
+      // since the workflow ignores it.
+      if (isMosaiks) {
+        body.numFeatures = parseInt(state.numFeatures, 10);
+      }
+      await apiPut("PutRunEmbeddingQueueMessage", body);
       onClose();
       if (fetchProjectDetails) fetchProjectDetails();
       setDialog("Success", "Embedding job started.", [
@@ -107,26 +169,36 @@ const CreateEditEmbeddingModal = ({
               />
             </div>
           </div>
-          <div className="row mb-3">
+          <div className="row mb-2">
             <div className="col-12">
+              <Dropdown
+                id="createEmbeddingModel"
+                label="Embedding model"
+                selectedKey={state.embeddingModel}
+                options={EMBEDDING_MODEL_OPTIONS.map((o) => ({
+                  key: o.key,
+                  text: o.text,
+                }))}
+                onChange={onModelChange}
+              />
               <p style={{ fontSize: 12, color: "#666", margin: "8px 0" }}>
-                Embeds the imagery around each building footprint with the
-                MOSAIKS model and builds the per-building feature table used by
-                the interactive labeler.
+                {modelHelp}
               </p>
             </div>
           </div>
           <div className="row mb-4">
             <div className="col-12 flex-column flex-md-row d-flex">
-              <TextField
-                id="createEmbeddingNumFeatures"
-                label="Number of features"
-                className="me-0 me-md-4 mb-2"
-                value={state.numFeatures}
-                onChange={(e, v) => onField(v, "numFeatures")}
-                errorMessage={state.numFeaturesError}
-                required
-              />
+              {isMosaiks && (
+                <TextField
+                  id="createEmbeddingNumFeatures"
+                  label="Number of features"
+                  className="me-0 me-md-4 mb-2"
+                  value={state.numFeatures}
+                  onChange={(e, v) => onField(v, "numFeatures")}
+                  errorMessage={state.numFeaturesError}
+                  required
+                />
+              )}
               <TextField
                 id="createEmbeddingResizeFactor"
                 label="Resize factor"

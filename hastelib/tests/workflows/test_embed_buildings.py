@@ -32,6 +32,12 @@ sys.modules["torch"].no_grad = lambda: (lambda fn: fn)
 sys.modules["torch"].nn = sys.modules["torch.nn"]
 sys.modules["torch.nn"].Module = type("Module", (), {})
 sys.modules["torch.nn"].functional = sys.modules["torch.nn.functional"]
+# torch.hub.{set_dir,load} are referenced at class-definition time inside
+# _DinoV2PatchTokensWrapper; stub them out so they don't get called here.
+sys.modules["torch.hub"] = types.ModuleType("torch.hub")
+sys.modules["torch.hub"].set_dir = lambda *_a, **_kw: None
+sys.modules["torch.hub"].load = lambda *_a, **_kw: None
+sys.modules["torch"].hub = sys.modules["torch.hub"]
 for _pkg in ("torchgeo", "torchgeo.models", "torchgeo.datasets"):
     if _pkg not in sys.modules:
         sys.modules[_pkg] = types.ModuleType(_pkg)
@@ -100,6 +106,24 @@ class TestComputeCropWindows(unittest.TestCase):
         self.assertLessEqual(crops[0]["width"], 32)
         self.assertLessEqual(crops[0]["height"], 32)
 
+    def test_dinov2_patch_size_14_grain(self):
+        # DINOv2 uses 14-pixel patches in MODEL space. With resize_factor=1
+        # that means the SOURCE-pixel padding grain is also 14, so every
+        # padded crop dimension must be a multiple of 14.
+        gdf = gpd.GeoDataFrame(geometry=[box(10, 10, 20, 20)])
+        crops = eb.compute_crop_windows(
+            gdf,
+            self.transform,
+            self.h,
+            self.w,
+            context_px=2,
+            resize_factor=1,
+            patch_size=14,
+        )
+        self.assertEqual(len(crops), 1)
+        self.assertEqual(crops[0]["padded_width"] % 14, 0)
+        self.assertEqual(crops[0]["padded_height"] % 14, 0)
+
 
 class TestRasterizeTokenGrid(unittest.TestCase):
     def test_mask_shape_and_nonempty(self):
@@ -110,6 +134,22 @@ class TestRasterizeTokenGrid(unittest.TestCase):
         )
         self.assertEqual(mask.shape, (10, 10))
         self.assertTrue(mask.any())
+
+    def test_mask_respects_patch_size_14(self):
+        # With patch_size=14 and resize_factor=1 the effective stride is 14
+        # source px / token, so a 140x140 source crop produces a 10x10 grid.
+        transform = rasterio.transform.from_bounds(0, 0, 140, 140, 140, 140)
+        geom = box(0, 0, 140, 140)
+        mask = eb.rasterize_building_in_token_grid(
+            geom,
+            transform,
+            token_h=10,
+            token_w=10,
+            resize_factor=1,
+            patch_size=14,
+        )
+        self.assertEqual(mask.shape, (10, 10))
+        self.assertTrue(mask.all())
 
 
 class TestAssembleOutputRowOrder(unittest.TestCase):

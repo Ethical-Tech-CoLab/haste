@@ -60,6 +60,7 @@ COPY --chown=dockeruser:dockeruser docker/training/scripts/ /app/scripts/
 COPY --chown=dockeruser:dockeruser hastelib/src/hastegeo /app/hastegeo
 
 # Convert line endings and ensure scripts are executable inside the container
+USER root
 RUN sed -i 's/\r$//' /app/scripts/*.sh && chmod +x /app/scripts/*.sh
 
 # Activate the environment by default and expose shared data directories
@@ -69,6 +70,19 @@ ENV GDAL_DATA=/opt/conda/envs/bda/share/gdal
 ENV PYTHONPATH=/app
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+# Pre-bake DINOv2 source + weights into an image-level torch.hub cache so
+# Azure Batch nodes don't need internet access (or the GitHub API) at job
+# runtime. The workflow code calls ``torch.hub.set_dir(TORCH_HUB_CACHE_DIR)``
+# before loading so this cache is used regardless of the per-task TORCH_HOME
+# the entrypoint script sets. Must run after the SSL_CERT_FILE env block so
+# the conda Python trusts GitHub's TLS cert for the source-repo fetch.
+RUN mkdir -p /opt/torch-hub-cache/hub \
+	&& chown -R dockeruser:dockeruser /opt/torch-hub-cache
+USER dockeruser
+RUN python -c "import torch; torch.hub.set_dir('/opt/torch-hub-cache/hub'); \
+	torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14', trust_repo=True); \
+	torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14', trust_repo=True)"
 
 # Use training-specific entrypoint wrapper to mirror imagery prep behavior
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
