@@ -21,6 +21,36 @@ import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import { limitTextLength } from "../../util/conversion";
 
+// Friendly per-row label for the embedding backbone column. The Model schema
+// stores ``embeddingModel`` as the raw backbone name passed to the workflow
+// (e.g. "mosaiks", "dinov2_vits14"); these display strings keep the parameter
+// dim visible inline so users can tell at a glance which row produced 1024-dim
+// features vs DINOv2's 768-dim.
+//
+// Keep in sync with EMBEDDING_MODEL_OPTIONS in CreateEditEmbeddingModal.jsx
+// and build_embedding_model() in hastelib/src/hastegeo/workflows/embed_buildings.py.
+const EMBEDDING_MODEL_LABELS = {
+  mosaiks: "MOSAIKS",
+  dinov2_vits14: "DINOv2 ViT-S/14",
+  dinov2_vitb14: "DINOv2 ViT-B/14",
+  dinov2_vitl14: "DINOv2 ViT-L/14",
+};
+
+function formatEmbeddingModel(model) {
+  const name = model.embeddingModel || "mosaiks";
+  const label = EMBEDDING_MODEL_LABELS[name] || name;
+  // MOSAIKS exposes a configurable output dim — surface it (and resize factor
+  // since the two together fully describe the run). DINOv2 dim is fixed per
+  // variant and already implied by the label, so just keep it clean.
+  if (name === "mosaiks") {
+    const parts = [];
+    if (model.numFeatures) parts.push(`${model.numFeatures} feats`);
+    if (model.resizeFactor) parts.push(`${model.resizeFactor}x resize`);
+    return parts.length ? `${label} (${parts.join(", ")})` : label;
+  }
+  return label;
+}
+
 const EmbeddingModelRow = ({
   model,
   projectId,
@@ -131,7 +161,12 @@ const EmbeddingModelRow = ({
         </Text>
       </td>
       <td className="pe-3 custom-text-no-wrap">
-        <Text variant="medium">Embedding</Text>
+        <TooltipHost
+          content={`Backbone: ${model.embeddingModel || "mosaiks"}`}
+          delay={2}
+        >
+          <Text variant="medium">{formatEmbeddingModel(model)}</Text>
+        </TooltipHost>
       </td>
       <td className="pe-3 custom-text-no-wrap d-flex align-items-center">
         <StatusIndicator
@@ -141,7 +176,7 @@ const EmbeddingModelRow = ({
           status={model.status}
           statusMessage={model.statusMessage}
           id={`singleEmbeddingStatus${index}`}
-          prefix="Embedding"
+          prefix={formatEmbeddingModel(model)}
         />
       </td>
       <td className="pe-3 custom-text-no-wrap">
