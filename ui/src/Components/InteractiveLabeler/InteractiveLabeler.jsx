@@ -538,7 +538,11 @@ const InteractiveLabeler = () => {
         if (cls == null) continue;
         if (!featureKeysRef.current) continue;
         const vec = extractFeatureVector(f.properties, featureKeysRef.current);
-        labeledMapRef.current[id] = { label: cls, features: vec };
+        labeledMapRef.current[id] = {
+          label: cls,
+          features: vec,
+          overtureId,
+        };
         setFeatureStateLabel(f.source, id, cls);
         restored++;
       }
@@ -634,7 +638,17 @@ const InteractiveLabeler = () => {
     }
     if (!featureKeysRef.current.length) return false;
     const vec = extractFeatureVector(props || {}, featureKeysRef.current);
-    labeledMapRef.current[id] = { label: cls, features: vec };
+    // Capture the Overture id (when present) up front so the save path
+    // doesn't have to guess. The persisted store is keyed by Overture id
+    // (so labels survive a re-embed that renumbers row-index ids); the
+    // hydrate path also looks up by Overture id on restore.
+    const overtureId =
+      props && props.overture_id != null ? props.overture_id : id;
+    labeledMapRef.current[id] = {
+      label: cls,
+      features: vec,
+      overtureId,
+    };
     // Any label change invalidates the cached trained model; the next
     // viewport predict will retrain. Clearing also invalidates.
     labelsDirtyRef.current = true;
