@@ -46,7 +46,6 @@ import {
   extractFeatureVector,
   holdoutMetricsDamaged,
   isValidVector,
-  predictClasses,
 } from "./interactiveModel.js";
 import { getGpu } from "./gpuLogreg.js";
 
@@ -158,6 +157,12 @@ const InteractiveLabeler = () => {
   const boxCleanupRef = useRef(null); // detaches document-level drag listeners
   const trainBusyRef = useRef(false);
   const trainPendingRef = useRef(false);
+  // Cached trained model + invalidation flag. We only retrain when the
+  // label set changes (recordLabel / clearLabel set labelsDirtyRef = true);
+  // moveend re-predict reuses the cached model. This keeps panning the map
+  // free of the "Training…" status that used to fire on every settle.
+  const trainedModelRef = useRef(null);
+  const labelsDirtyRef = useRef(true);
   const fullPredictAbortRef = useRef({ cancelled: false });
 
   const [isMapReady, setIsMapReady] = useState(false);
@@ -537,7 +542,10 @@ const InteractiveLabeler = () => {
         setFeatureStateLabel(f.source, id, cls);
         restored++;
       }
-      if (restored > 0) refreshCounts();
+      if (restored > 0) {
+        labelsDirtyRef.current = true;
+        refreshCounts();
+      }
     }
 
     // Re-apply in-session labels / predictions for any buildings whose
@@ -627,6 +635,9 @@ const InteractiveLabeler = () => {
     if (!featureKeysRef.current.length) return false;
     const vec = extractFeatureVector(props || {}, featureKeysRef.current);
     labeledMapRef.current[id] = { label: cls, features: vec };
+    // Any label change invalidates the cached trained model; the next
+    // viewport predict will retrain. Clearing also invalidates.
+    labelsDirtyRef.current = true;
     return true;
   }
   function labelBuilding(id, props, cls) {
@@ -654,6 +665,7 @@ const InteractiveLabeler = () => {
   }
   function clearLabel(id) {
     delete labeledMapRef.current[id];
+    labelsDirtyRef.current = true;
     clearFeatureStateLabel(primarySourceId(), id);
     refreshCounts();
   }
@@ -747,10 +759,10 @@ const InteractiveLabeler = () => {
   }
 
   // ── Viewport-scoped train + predict ───────────────────────────────────────
-  // Trains on the labeled buildings (which accumulate across viewport visits
-  // — they live in labeledMapRef, not on the rendered features) and predicts
-  // for every building currently rendered. Async because WebGPU is async; a
-  // busy guard coalesces rapid retrains.
+  // Train ONCE per label-set change (labelsDirtyRef flips on every label/
+  // clear/restore), then reuse the cached model on every viewport settle.
+  // Without this, panning a settled labeler triggered a full retrain on
+  // each moveend — visible to the user as a flickering "Training…" status.
   async function maybeTrainAndPredict(viewportFeatures) {
     if (trainBusyRef.current) {
       trainPendingRef.current = true;
@@ -772,14 +784,33 @@ const InteractiveLabeler = () => {
     }
 
     trainBusyRef.current = true;
-    setStatus("Training…");
     try {
-      const metrics = await holdoutMetricsDamaged(
-        entries,
-        0.2,
-        CLASS_DAMAGED
-      );
-      if (metrics) setMetrics({ ...metrics, mode: "holdout" });
+      // Only retrain when the label set actually changed. The metrics panel
+      // is paired with training, so it refreshes on the same cadence.
+      if (labelsDirtyRef.current || !trainedModelRef.current) {
+        setStatus("Training…");
+        const metrics = await holdoutMetricsDamaged(
+          entries,
+          0.2,
+          CLASS_DAMAGED
+        );
+        if (metrics) setMetrics({ ...metrics, mode: "holdout" });
+        const ovr = new OvRLogisticRegression({
+          learningRate: 0.1,
+          numSteps: 500,
+          lambda: 0.01,
+        });
+        ovr.train(
+          entries.map((e) => e.features),
+          entries.map((e) => e.label)
+        );
+        trainedModelRef.current = ovr;
+        labelsDirtyRef.current = false;
+        // The backend label is purely cosmetic for the cached path —
+        // training is CPU-only here, but the WebGPU label still applies
+        // to the holdout-metrics path if a GPU was detected.
+        setBackend((b) => b || "CPU");
+      }
 
       if (!featureKeysRef.current) return;
       // Score only the buildings currently in the viewport.
@@ -799,18 +830,14 @@ const InteractiveLabeler = () => {
       }
       if (matrix.length === 0) return;
 
-      const { predictions, backend: be } = await predictClasses(
-        entries,
-        matrix
-      );
+      const predictions = trainedModelRef.current.predict(matrix);
       for (let i = 0; i < ids.length; i++) {
         predictionsMapRef.current[ids[i]] = predictions[i];
         setFeatureStatePred(sources[i], ids[i], predictions[i]);
       }
-      setBackend(be);
       setViewportPredicted(ids.length);
       setStatus(
-        `Predicted ${ids.length} buildings in viewport (${entries.length} labels, ${be}).`
+        `Predicted ${ids.length} buildings in viewport (${entries.length} labels).`
       );
     } finally {
       trainBusyRef.current = false;
