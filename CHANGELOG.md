@@ -11,6 +11,7 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ### Security
 - **`pyarrow` upgraded 18.1.0 → 23.0.1 in the training env (CVE-2026-25087, High)** — Patches the same use-after-free in pyarrow's IPC file reader as the imageryprep fix, this time in `docker/training/env/env.yml` (the Azure Batch GPU training image). The bump was blocked by `deltalake==0.25.4`, which hard-caps `pyarrow<19`; since `deltalake` is pinned but never imported anywhere in the repo, it was upgraded to `deltalake==1.6.1` (1.x makes `pyarrow` an optional extra, decoupling it from the pin). ([#60](https://github.com/microsoft/haste/issues/60))
+- **`pyarrow` upgraded 18.1.0 → 23.0.1 (CVE-2026-25087, High)** — Patches a use-after-free in pyarrow's IPC file reader (triggered with pre-buffering enabled) where a crafted Arrow/Parquet file could corrupt memory and potentially execute code inside the **imageryprep** Azure Batch node, exposing its Managed Service Identity token (Blob / Data Lake read+write). Bumped the pin in `docker/imageryprep/requirements.txt` (`pyarrow==23.0.1`) and raised the floor to `pyarrow>=23.0.1` in `hastelib/pyproject.toml`, which also lifts the API containers once a new `hastegeo` wheel is published. ([#57](https://github.com/microsoft/haste/issues/57))
 
 ---
 
