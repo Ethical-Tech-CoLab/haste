@@ -7,6 +7,13 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ---
 
+## [Unreleased]
+
+### Security
+- **`pyarrow` upgraded 18.1.0 → 23.0.1 in the training env (CVE-2026-25087, High)** — Patches the same use-after-free in pyarrow's IPC file reader as the imageryprep fix, this time in `docker/training/env/env.yml` (the Azure Batch GPU training image). The bump was blocked by `deltalake==0.25.4`, which hard-caps `pyarrow<19`; since `deltalake` is pinned but never imported anywhere in the repo, it was upgraded to `deltalake==1.6.1` (1.x makes `pyarrow` an optional extra, decoupling it from the pin). ([#60](https://github.com/microsoft/haste/issues/60))
+
+---
+
 ## [v1.4.7] — Hotfix: non-admin project creation
 
 ### Fixed
