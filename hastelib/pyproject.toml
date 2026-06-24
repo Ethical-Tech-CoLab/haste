@@ -46,7 +46,7 @@ dependencies = [
   "shapely",
   "fiona",
   "geopandas",
-  "pyarrow",
+  "pyarrow>=23.0.1",
   "fsspec",
   "adlfs",
   "pyyaml",
