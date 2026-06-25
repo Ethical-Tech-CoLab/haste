@@ -36,7 +36,7 @@ For the triage workflow, ownership, and SLAs that govern when entries land here,
 
 ## Root Cause C — GDAL wheel availability gap
 
-**Affects:** Dependabot alerts #33, #34, #38 (`hastelib/pyproject.toml`)
+**Affects:** Dependabot alerts `#33`, `#34`, `#38` (`hastelib/pyproject.toml`, `api/hastefuncapi/requirements.txt`, `api/hastefuncqueues/requirements.txt`, `docker/imageryprep/requirements.txt`)
 
 HASTE runtime depends on `GDAL==3.9.2` via externally hosted pip wheels in API and imageryprep requirements files. Dependabot advisory metadata points to patched versions in the 3.13 line, but no trusted, prebuilt pip wheel source is currently available for HASTE's Linux runtime constraints.
 
