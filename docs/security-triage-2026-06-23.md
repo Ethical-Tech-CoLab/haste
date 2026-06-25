@@ -293,7 +293,7 @@ Arbitrary file read via a crafted `sourceMappingURL` comment. Only exploitable i
 **Dependabot Severity:** Low
 **NIST NVD Severity:** HIGH (7.8) for CVE-2026-8087; Medium for others
 **Package:** `gdal==3.9.2` → fix in `3.13.x` line
-**Manifests:** `hastelib/pyproject.toml`, `docker/imageryprep/requirements.txt`
+**Manifests:** `hastelib/pyproject.toml`, `api/hastefuncapi/requirements.txt`, `api/hastefuncqueues/requirements.txt`, `docker/imageryprep/requirements.txt`
 **Component:** hastelib (all geospatial processing) + imageryprep container
 **Status:** ⏳ Pending — dependency exception with compensating controls
 
