@@ -52,9 +52,9 @@ The current decision is to defer upgrade and apply compensating controls until a
 
 | Alert # | Package | CVE | Advisory | Dependabot state | Current disposition |
 |---------|---------|-----|----------|------------------|---------------------|
-| #33 | GDAL | CVE-2026-8088 | GHSA-j3f5-rw74-g4rv | Open | Deferred with compensating controls |
-| #34 | GDAL | CVE-2026-8087 | GHSA-h9rh-5ffh-h669 | Open | Deferred with compensating controls |
-| #38 | GDAL | CVE-2026-8212 | GHSA-r5m4-5vww-w9f5 | Open | Deferred with compensating controls |
+| `#33` | GDAL | CVE-2026-8088 | GHSA-j3f5-rw74-g4rv | Dismissed (risk tolerable) | Deferred with compensating controls |
+| `#34` | GDAL | CVE-2026-8087 | GHSA-h9rh-5ffh-h669 | Dismissed (risk tolerable) | Deferred with compensating controls |
+| `#38` | GDAL | CVE-2026-8212 | GHSA-r5m4-5vww-w9f5 | Dismissed (risk tolerable) | Deferred with compensating controls |
 
 ---
 
