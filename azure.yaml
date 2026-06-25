@@ -1,0 +1,34 @@
+# azd configuration for HASTE. `azd provision` applies infra/main.bicep;
+# `azd deploy` publishes the three Function Apps and the Static Web App.
+# Resource names are resolved from main.bicep outputs.
+name: haste
+metadata:
+  template: haste@1.0.0
+
+infra:
+  provider: bicep
+  path: infra
+  module: main
+
+services:
+  api:
+    project: api/hastefuncapi
+    language: python
+    host: function
+    resourceName: ${FUNCTION_API_NAME}
+  titiler:
+    project: api/titilerfuncapi
+    language: python
+    host: function
+    resourceName: ${FUNCTION_TITILER_NAME}
+  queues:
+    project: api/hastefuncqueues
+    language: python
+    host: function
+    resourceName: ${FUNCTION_QUEUE_NAME}
+  web:
+    project: ui
+    language: js
+    host: staticwebapp
+    resourceName: ${STATIC_WEB_APP_NAME}
+    dist: dist

@@ -22,9 +22,9 @@ Add AcrPull RBAC role to the identity created by the setup access to the shared 
 
 # Azure Batch Setup
 
-Pool Name: h100-ai4g-pool
+Pool Name: <your-gpu-pool-name>
 
-Description: AI For Good BDA H100 Pool
+Description: GPU pool for BDA workloads
 
 Managed Identity: Yes / Add User Assigned Identity created by de setup script 
 

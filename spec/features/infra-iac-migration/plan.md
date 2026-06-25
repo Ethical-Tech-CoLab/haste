@@ -24,24 +24,24 @@
 
 | Task | Agent | Dependencies | Story Ref | Status |
 |---|---|---|---|---|
-| **As-built inventory** of live env (RG resources + sub-scope custom roles/assignments incl. ACS and the SWA invitation role) | `backend-dev` | Phase 0 | US-001, US-002 | not-started |
-| `infra/main.bicep` (subscription scope, RG + module wiring) | `backend-dev` | Inventory | US-001, US-002 | not-started |
-| `infra/main.bicepparam` (typed params, flags, shared refs) | `backend-dev` | main.bicep | US-002 | not-started |
-| `modules/identity.bicep` (UMI + built-in role assignments) | `backend-dev` | main.bicep | US-002 | not-started |
-| `modules/roles.bicep` (custom SWA invitation role + assignment to function identity) | `backend-dev` | identity, frontend | US-006 | not-started |
-| `modules/network.bicep` (vnet, subnets, nsg, endpoints) | `backend-dev` | main.bicep | US-002 | not-started |
-| `modules/storage.bicep` (func storage + premium file share + rules) | `backend-dev` | identity, network | US-002 | not-started |
-| `modules/monitoring.bicep` (Log Analytics + App Insights) | `backend-dev` | main.bicep | US-002 | not-started |
-| `modules/communication.bicep` (ACS + email service + sender domain) | `backend-dev` | main.bicep | US-002, US-004 | not-started |
-| `modules/apim.bicep` (service + apis + backends + policies) | `backend-dev` | identity, network | US-002 | not-started |
-| `modules/functions.bicep` (3 Flex Consumption apps) | `backend-dev` | storage, monitoring | US-002 | not-started |
-| `modules/batch.bicep` (dual create-vs-BYO account; pool autoscale + container config; pool can be created on an existing shared account via cross-RG scope) | `backend-dev` | identity, network | US-002 | not-started |
-| `modules/frontend.bicep` (SWA + Maps) | `backend-dev` | main.bicep | US-002 | not-started |
-| `modules/frontdoor.bicep` (feature-flagged Front Door + WAF) | `backend-dev` | frontend | US-002 | not-started |
-| Validate `az bicep build` + `what-if` vs live RG | `backend-validation` | All above | US-001 | not-started |
+| **As-built inventory** of live env (RG resources + sub-scope custom roles/assignments incl. ACS and the SWA invitation role) | `backend-dev` | Phase 0 | US-001, US-002 | completed |
+| `infra/main.bicep` (subscription scope, RG + module wiring) | `backend-dev` | Inventory | US-001, US-002 | completed |
+| `infra/main.bicepparam` (typed params, flags, shared refs) | `backend-dev` | main.bicep | US-002 | completed |
+| `modules/identity.bicep` (UMI + built-in role assignments) | `backend-dev` | main.bicep | US-002 | completed |
+| `modules/roles.bicep` (custom SWA invitation role + assignment to function identity) | `backend-dev` | identity, frontend | US-006 | completed |
+| `modules/network.bicep` (vnet, subnets, nsg, endpoints) | `backend-dev` | main.bicep | US-002 | completed |
+| `modules/storage.bicep` (func storage + premium file share + rules) | `backend-dev` | identity, network | US-002 | completed |
+| `modules/monitoring.bicep` (Log Analytics + App Insights) | `backend-dev` | main.bicep | US-002 | completed |
+| `modules/communication.bicep` (ACS + email service + sender domain) | `backend-dev` | main.bicep | US-002, US-004 | completed |
+| `modules/apim.bicep` (service + apis + backends + policies) | `backend-dev` | identity, network | US-002 | completed |
+| `modules/functions.bicep` (3 Flex Consumption apps) | `backend-dev` | storage, monitoring | US-002 | completed |
+| `modules/batch.bicep` (dual create-vs-BYO account; pool autoscale + container config; pool can be created on an existing shared account via cross-RG scope) | `backend-dev` | identity, network | US-002 | completed |
+| `modules/frontend.bicep` (SWA + Maps) | `backend-dev` | main.bicep | US-002 | completed |
+| `modules/frontdoor.bicep` (feature-flagged Front Door + WAF) | `backend-dev` | frontend | US-002 | completed |
+| Validate `az bicep build` + `what-if` vs live RG | `backend-validation` | All above | US-001 | in-progress |
 
 **Exit Criteria:**
-- [ ] All modules compile (`az bicep build`)
+- [x] All modules compile (`az bicep build`)
 - [ ] `what-if` against a live environment reports parity (no unexpected deletes), reviewed against the env RG **and** `sharedResourceGroup` when creating a pool on a shared Batch account
 
 ---
