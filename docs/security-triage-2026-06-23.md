@@ -389,4 +389,4 @@ Files to change:
 
 | Alert(s) | Reason |
 |----------|--------|
-| #33, #34, #38 (GDAL) | Custom wheel rebuild required — tracked separately |
+| #33, #34, #38 (GDAL) | Dependency exception with compensating controls — no trusted wheel for GDAL 3.13.x available; URL allowlist + SSRF guards applied; re-evaluate weekly |
