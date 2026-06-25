@@ -301,9 +301,9 @@ Three memory-safety vulnerabilities in GDAL 3.9.2:
 
 | Alert | CVE | NIST Severity | Description | First patched version |
 |-------|-----|---------------|-------------|-----------------------|
-| #34 | CVE-2026-8087 | **HIGH 7.8** | Heap-based buffer overflow in HDF4/EOS `GDnentries` | 3.13.0 |
-| #33 | CVE-2026-8088 | Medium 5.5 | Out-of-bounds read in `GDfieldinfo` | 3.13.0 |
-| #38 | CVE-2026-8212 | Medium 5.5 | Out-of-bounds read in `SWSDfldsrch` (Dependabot: heap overflow — NIST classifies as OOB read) | 3.13.0RC1 (3.13.0 also satisfies) |
+| `#34` | CVE-2026-8087 | **HIGH 7.8** | Heap-based buffer overflow in HDF4/EOS `GDnentries` | 3.13.0 |
+| `#33` | CVE-2026-8088 | Medium 5.5 | Out-of-bounds read in `GDfieldinfo` | 3.13.0 |
+| `#38` | CVE-2026-8212 | Medium 5.5 | Out-of-bounds read in `SWSDfldsrch` (Dependabot: heap overflow — NIST classifies as OOB read) | 3.13.0rc1 (3.13.0 also satisfies) |
 
 > **Warning:** Dependabot rates these LOW but NIST rates CVE-2026-8087 at **7.8 HIGH**. GDAL processes satellite imagery from external sources throughout `hastelib`. File parsing vulnerabilities in GDAL are a realistic attack vector — a malicious GeoTIFF/HDF4 file delivered via imagery provider API could exploit these. Do not treat as routine backlog without a tracked plan.
 
