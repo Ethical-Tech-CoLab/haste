@@ -34,6 +34,30 @@ For the triage workflow, ownership, and SLAs that govern when entries land here,
 
 ---
 
+## Root Cause C — GDAL wheel availability gap
+
+**Affects:** Dependabot alerts #33, #34, #38 (`hastelib/pyproject.toml`)
+
+HASTE runtime depends on `GDAL==3.9.2` via externally hosted pip wheels in API and imageryprep requirements files. Dependabot advisory metadata points to patched versions in the 3.13 line, but no trusted, prebuilt pip wheel source is currently available for HASTE's Linux runtime constraints.
+
+The current decision is to defer upgrade and apply compensating controls until a trusted upstream wheel source is available or the deployment model is changed.
+
+### Compensating controls (required while deferred)
+
+- Only ingest imagery from authenticated, allowlisted providers and controlled blob endpoints.
+- Reject unsupported formats before GDAL parsing (including HDF4/EOS where not required by product workflows).
+- Enforce strict size and type checks at upload and download boundaries.
+- Keep SSRF protections and cross-host redirect restrictions enabled for remote fetch paths.
+- Review this exception weekly and close it immediately when a trusted wheel path becomes available.
+
+| Alert # | Package | CVE | Advisory | Dependabot state | Current disposition |
+|---------|---------|-----|----------|------------------|---------------------|
+| #33 | GDAL | CVE-2026-8088 | GHSA-j3f5-rw74-g4rv | Open | Deferred with compensating controls |
+| #34 | GDAL | CVE-2026-8087 | GHSA-h9rh-5ffh-h669 | Open | Deferred with compensating controls |
+| #38 | GDAL | CVE-2026-8212 | GHSA-r5m4-5vww-w9f5 | Open | Deferred with compensating controls |
+
+---
+
 ## Dismissal rationale (for GitHub Dependabot)
 
 When dismissing these alerts on GitHub, use **"Risk tolerable for this project"** with notes along these lines:
@@ -41,3 +65,4 @@ When dismissing these alerts on GitHub, use **"Risk tolerable for this project"*
 - **Alerts #3, #4, #6, #7, #9, #10, #11, #20–29:** Resolved — `azurite` removed from `package.json` and `package-lock.json` regenerated. These alerts should auto-close on next Dependabot rescan; dismiss as fixed if they persist.
 - **Alerts #14, #15, #16:** `inBundle: true` inside `npm@11.13.0` tarball; non-bundled installs already at patched versions. No production exposure.
 - **Alert #32:** `ip-address` `inBundle: true` inside `npm@11.13.0` tarball. XSS in `Address6` HTML-emitting methods; not reachable from application code. Blocked on npm upstream shipping `ip-address@10.1.1` in its bundle.
+- **Alerts #33, #34, #38:** Patched versions require GDAL 3.13 runtime artifacts that are not currently available as trusted pip wheels for this deployment model. Runtime is constrained to externally hosted Linux wheels. Compensating controls are in place or in progress: allowlisted providers/endpoints, pre-parse format filtering, strict size/type checks, and SSRF/redirect guards. Review weekly; close when a trusted wheel source or alternate deployment model is ready.
