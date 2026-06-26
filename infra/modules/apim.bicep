@@ -58,6 +58,17 @@ resource apim 'Microsoft.ApiManagement/service@2024-06-01-preview' = {
     legacyPortalStatus: 'Disabled'
     developerPortalStatus: 'Disabled'
     releaseChannel: 'Default'
+    publicNetworkAccess: 'Enabled'
+    natGatewayState: 'Enabled'
+    // Disable legacy TLS/SSL on both the client and backend sides.
+    customProperties: {
+      'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'False'
+      'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'False'
+      'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Ssl30': 'False'
+      'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls10': 'False'
+      'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls11': 'False'
+      'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Ssl30': 'False'
+    }
   }
 }
 

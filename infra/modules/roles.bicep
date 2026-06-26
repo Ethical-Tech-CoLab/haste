@@ -7,6 +7,9 @@
 @description('Static Web App name to scope the assignment to.')
 param staticWebAppName string
 
+@description('Azure Maps account name to grant the API identity read access on.')
+param mapsAccountName string
+
 @description('System-assigned principal id of the API function app.')
 param functionSystemPrincipalId string
 
@@ -41,6 +44,26 @@ resource invitationAssignment 'Microsoft.Authorization/roleAssignments@2022-04-0
   scope: staticWebApp
   properties: {
     roleDefinitionId: invitationRole.id
+    principalId: functionSystemPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The API app reads Azure Maps tiles/data with its system-assigned identity
+// via DefaultAzureCredential, so it needs Azure Maps Data Reader on the Maps
+// account. (Built-in role 423170ca-a8f6-4b0f-8487-9e4eb8f49bfa.)
+resource mapsAccount 'Microsoft.Maps/accounts@2023-06-01' existing = {
+  name: mapsAccountName
+}
+
+resource mapsDataReaderAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(mapsAccount.id, functionSystemPrincipalId, 'AzureMapsDataReader')
+  scope: mapsAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '423170ca-a8f6-4b0f-8487-9e4eb8f49bfa'
+    )
     principalId: functionSystemPrincipalId
     principalType: 'ServicePrincipal'
   }

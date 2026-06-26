@@ -67,6 +67,12 @@ module titilerApp 'functionApp.bicep' = {
     logAnalyticsId: logAnalyticsId
     tags: tags
   }
+  // All three apps integrate with the same func-subnet. A subnet's
+  // ServiceAssociationLink lease is single-writer, so the integrations must be
+  // serialized — otherwise concurrent deployments fail with a SAL lease conflict.
+  dependsOn: [
+    apiApp
+  ]
 }
 
 module queueApp 'functionApp.bicep' = {
@@ -84,6 +90,9 @@ module queueApp 'functionApp.bicep' = {
     logAnalyticsId: logAnalyticsId
     tags: tags
   }
+  dependsOn: [
+    titilerApp
+  ]
 }
 
 // Used by roles.bicep to grant the SWA invitation role to the API app's

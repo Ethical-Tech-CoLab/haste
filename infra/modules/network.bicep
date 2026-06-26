@@ -75,12 +75,17 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
             {
               service: 'Microsoft.Storage'
             }
+            {
+              service: 'Microsoft.Web'
+            }
           ]
           delegations: [
             {
-              name: 'serverFarms'
+              // Flex Consumption VNet integration requires the integration
+              // subnet to be delegated to Microsoft.App/environments.
+              name: 'appEnvironments'
               properties: {
-                serviceName: 'Microsoft.Web/serverFarms'
+                serviceName: 'Microsoft.App/environments'
               }
             }
           ]

@@ -63,7 +63,7 @@ infra/
 | Module | Replaces (in `setup_infra.sh`) | Key resources |
 |---|---|---|
 | `identity.bicep` | `create_group_and_umi`, ACR/storage role assignments | `Microsoft.ManagedIdentity/userAssignedIdentities`, `roleAssignments` |
-| `roles.bicep` | (manual, as-built) custom role + assignment letting the API function app issue SWA invitations | `Microsoft.Authorization/roleDefinitions` (custom role granting `microsoft.web/staticSites/*`) + `roleAssignments` to the API app's **system-assigned** identity scoped to the SWA |
+| `roles.bicep` | (manual, as-built) custom role + assignment letting the API function app issue SWA invitations, plus the Azure Maps Data Reader grant | `Microsoft.Authorization/roleDefinitions` (custom role granting `microsoft.web/staticSites/*`) + `roleAssignments` to the API app's **system-assigned** identity scoped to the SWA, and an `Azure Maps Data Reader` assignment to the same identity scoped to the Maps account |
 | `storage.bicep` | `create_storage`, network rules | `Microsoft.Storage/storageAccounts` (Standard_LRS + Premium FileStorage), file share |
 | `network.bicep` | `configure_networking_and_logging` | `virtualNetworks`, subnets, `networkSecurityGroups` |
 | `monitoring.bicep` | Log Analytics + per-app App Insights | `Microsoft.OperationalInsights/workspaces`, `Microsoft.Insights/components` |
@@ -93,6 +93,7 @@ must reproduce. Known manual resources captured so far:
 |---|---|---|
 | Azure Communication Services (Email) | Email backend created out-of-band; connection string was pasted manually. The operated deployment uses a **custom** sender domain (`notifications.<your-domain>`) | `communication.bicep` |
 | Custom role for SWA user management (`microsoft.web/staticSites/*`) + assignment | The API function app calls `createUserInvitation` on the SWA at runtime ([user.py](../../../hastelib/src/hastegeo/core/utils/user.py)). The role is assigned at the **SWA scope** to the app's **system-assigned** identity (not the UMI) | `roles.bicep` |
+| `Azure Maps Data Reader` on the Maps account → API app **system-assigned** identity | The API app reads Azure Maps tiles/data at runtime via `DefaultAzureCredential` (the system-assigned identity). A missing grant caused a production outage (2026-06-25); now modeled so every environment receives it automatically | `roles.bicep` (built-in role `423170ca-a8f6-4b0f-8487-9e4eb8f49bfa`) |
 | Narrower legacy invitation role (`Microsoft.Web/staticSites/createinvitation/action`) | **Unassigned** — superseded by the broader SWA user-management role. **Decision (2026-06-25): retire — not modeled in IaC.** | n/a (retire) |
 | Shared Batch account | The GPU pool lives on a shared Batch account in a separate resource group, not the env RG | `batch.bicep` in `Existing` mode |
 | Shared container registry (ACR) | The training/imageryprep images are pulled from a shared ACR that lives in `sharedResourceGroup`, not the env RG | `identity.bicep` references it by `sharedAcrName`; the env UMI's `AcrPull` assignment is **cross-RG** (scoped to `sharedResourceGroup`) |
@@ -198,6 +199,16 @@ follow-up noted above).
 > resource. This keeps day-to-day operation painless (forks and an operated
 > deployment can both spin up pools on the shared GPU account) at the cost of a
 > write into a shared RG.
+
+> **Subscription Batch-account quota is 1.** Verified 2026-06-25: the
+> subscription caps Batch accounts at 1, already consumed by the operated
+> environment's shared account (`existingBatchAccountName`, which lives in
+> `sharedResourceGroup`). A second environment in the same subscription
+> therefore **cannot** use `batchAccountMode=Create` — preflight fails with
+> `SubscriptionAccountQuotaExceeded`. Multi-environment operated deployments
+> must use `batchAccountMode=Existing` + `batchPoolMode=Create`, which adds only
+> a new pool on the shared account. `Create` mode remains valid for forks that
+> deploy into their own subscription.
 >
 > **Blast-radius caution:** because this path writes into a resource group you
 > may share with other workloads, `what-if` must be reviewed against **both**

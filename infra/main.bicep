@@ -272,6 +272,7 @@ module roles 'modules/roles.bicep' = {
   scope: rg
   params: {
     staticWebAppName: staticWebAppName
+    mapsAccountName: mapsAccountName
     functionSystemPrincipalId: functions.outputs.apiSystemPrincipalId
   }
   dependsOn: [
