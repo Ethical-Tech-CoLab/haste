@@ -292,34 +292,34 @@ Arbitrary file read via a crafted `sourceMappingURL` comment. Only exploitable i
 
 **Dependabot Severity:** Low
 **NIST NVD Severity:** HIGH (7.8) for CVE-2026-8087; Medium for others
-**Package:** `gdal==3.9.2` → fix `3.13.0`
-**Manifests:** `hastelib/pyproject.toml`, `docker/imageryprep/requirements.txt`
+**Package:** `gdal==3.9.2` → fix in `3.13.x` line
+**Manifests:** `hastelib/pyproject.toml`, `api/hastefuncapi/requirements.txt`, `api/hastefuncqueues/requirements.txt`, `docker/imageryprep/requirements.txt`
 **Component:** hastelib (all geospatial processing) + imageryprep container
-**Status:** ⏳ Pending — custom wheel rebuild required; tracked separately
+**Status:** ⏳ Pending — dependency exception with compensating controls
 
 Three memory-safety vulnerabilities in GDAL 3.9.2:
 
-| Alert | CVE | NIST Severity | Description |
-|-------|-----|---------------|-------------|
-| #34 | CVE-2026-8087 | **HIGH 7.8** | Heap-based buffer overflow in HDF4/EOS `GDnentries` |
-| #33 | CVE-2026-8088 | Medium 5.5 | Out-of-bounds read in `GDfieldinfo` |
-| #38 | CVE-2026-8212 | Medium 5.5 | Out-of-bounds read in `SWSDfldsrch` (Dependabot: heap overflow — NIST classifies as OOB read) |
+| Alert | CVE | NIST Severity | Description | First patched version |
+|-------|-----|---------------|-------------|-----------------------|
+| `#34` | CVE-2026-8087 | **HIGH 7.8** | Heap-based buffer overflow in HDF4/EOS `GDnentries` | 3.13.0 |
+| `#33` | CVE-2026-8088 | Medium 5.5 | Out-of-bounds read in `GDfieldinfo` | 3.13.0 |
+| `#38` | CVE-2026-8212 | Medium 5.5 | Out-of-bounds read in `SWSDfldsrch` (Dependabot: heap overflow — NIST classifies as OOB read) | 3.13.0rc1 (3.13.0 also satisfies) |
 
 > **Warning:** Dependabot rates these LOW but NIST rates CVE-2026-8087 at **7.8 HIGH**. GDAL processes satellite imagery from external sources throughout `hastelib`. File parsing vulnerabilities in GDAL are a realistic attack vector — a malicious GeoTIFF/HDF4 file delivered via imagery provider API could exploit these. Do not treat as routine backlog without a tracked plan.
 
-**Upgrade constraint:** HASTE uses a custom-built manylinux wheel pinned to `gdal==3.9.2` hosted at an Azure Blob URL. Upgrading requires:
+**Upgrade constraint:** HASTE depends on externally hosted Linux pip wheels for GDAL. A trusted prebuilt pip wheel source for the patched GDAL 3.13 line is not currently available for HASTE runtime constraints.
 
-1. Building a new `GDAL-3.13.x-cp311-cp311-manylinux_2_17_x86_64.whl`
-2. Uploading it to the HASTE binaries blob container
-3. Updating the URL in [docker/imageryprep/requirements.txt](../docker/imageryprep/requirements.txt)
-4. Updating the pin in [hastelib/pyproject.toml](../hastelib/pyproject.toml)
-5. Full regression testing of all geospatial pipelines
+**Recommended action (no wheel ownership path):**
 
-**Recommended action:**
+- Keep alerts #33, #34, and #38 in a documented dependency exception state.
+- Enforce compensating controls: authenticated allowlisted providers/endpoints, pre-parse format filtering, strict size/type checks, and SSRF/redirect guards.
+- Re-evaluate weekly for upstream trusted wheels or a deployment-model change that removes the pip wheel dependency.
 
-- Open a tracked issue assigned to GIS Agent + Backend Dev Agent
-- Author an ADR in `spec/architecture/decisions/` covering the wheel build process
-- Interim mitigation: ensure all imagery input is from authenticated, known-good provider APIs; add magic-byte pre-validation before passing files to GDAL
+**Implementation status (bottom line):**
+
+- Fully implemented today: URL allowlist enforcement plus SSRF/redirect guards on the custom-footprint fetch path.
+- Partially implemented today: authenticated-source guarantees and strict size/type validation across all ingestion boundaries.
+
 
 **Owner:** GIS Agent + Backend Dev Agent
 **References:** [NVD CVE-2026-8087](https://nvd.nist.gov/vuln/detail/CVE-2026-8087) · [NVD CVE-2026-8088](https://nvd.nist.gov/vuln/detail/CVE-2026-8088) · [NVD CVE-2026-8212](https://nvd.nist.gov/vuln/detail/CVE-2026-8212)
@@ -389,4 +389,4 @@ Files to change:
 
 | Alert(s) | Reason |
 |----------|--------|
-| #33, #34, #38 (GDAL) | Custom wheel rebuild required — tracked separately |
+| #33, #34, #38 (GDAL) | Dependency exception with compensating controls — no trusted wheel for GDAL 3.13.x available; URL allowlist + SSRF guards applied; re-evaluate weekly |
