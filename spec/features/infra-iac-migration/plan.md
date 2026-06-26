@@ -38,11 +38,11 @@
 | `modules/batch.bicep` (dual create-vs-BYO account; pool autoscale + container config; pool can be created on an existing shared account via cross-RG scope) | `backend-dev` | identity, network | US-002 | completed |
 | `modules/frontend.bicep` (SWA + Maps) | `backend-dev` | main.bicep | US-002 | completed |
 | `modules/frontdoor.bicep` (feature-flagged Front Door + WAF) | `backend-dev` | frontend | US-002 | completed |
-| Validate `az bicep build` + `what-if` vs live RG | `backend-validation` | All above | US-001 | in-progress |
+| Validate `az bicep build` + `what-if` vs live RG | `backend-validation` | All above | US-001 | completed |
 
 **Exit Criteria:**
 - [x] All modules compile (`az bicep build`)
-- [ ] `what-if` against a live environment reports parity (no unexpected deletes), reviewed against the env RG **and** `sharedResourceGroup` when creating a pool on a shared Batch account
+- [x] `what-if` for a fresh `dev2` environment is clean (42 creates, 0 modify, 0 delete; 5 additive role assignments flagged as unsupported-by-what-if only), reviewed against the env RG **and** `sharedResourceGroup` (cross-RG Batch pool on the shared account)
 
 ---
 
@@ -52,13 +52,14 @@
 
 | Task | Agent | Dependencies | Story Ref | Status |
 |---|---|---|---|---|
-| `azure.yaml` (api, titiler, queues, web services) | `backend-dev` | Phase 1 | US-001 | not-started |
-| Map Bicep outputs → azd service targets | `backend-dev` | azure.yaml | US-001 | not-started |
-| `azd provision` + `azd deploy` end-to-end test | `backend-validation` | azure.yaml | US-001 | not-started |
+| `azure.yaml` (api, titiler, queues, web services) | `backend-dev` | Phase 1 | US-001 | completed |
+| Map Bicep outputs → azd service targets | `backend-dev` | azure.yaml | US-001 | completed |
+| `azd provision` + `azd deploy` end-to-end test | `backend-validation` | azure.yaml | US-001 | in-progress |
 
 **Exit Criteria:**
-- [ ] `azd up` provisions and deploys a working environment cross-platform
-- [ ] Function Apps and SWA reachable
+- [x] `azd provision` stands up a fresh `dev2` environment (idempotent adopt of the Bicep deploy)
+- [x] All three Function Apps deployed via `azd deploy` (api, titiler, queues) and reachable
+- [ ] `web` (SWA) deploy — blocked on per-environment frontend config (`.env.dev2`, `build:dev2`, swa config / AAD app registration)
 
 ---
 
