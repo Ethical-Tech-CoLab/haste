@@ -35,7 +35,7 @@ import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
 } from "../../util/azureMapsAuth";
-import { toBrowserBlobUrl } from "../../util/blobUrl";
+import { toBrowserBlobUrl, toBrowserTitilerUrl } from "../../util/blobUrl";
 import { AppContext } from "../../AppContext.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 import {
@@ -323,7 +323,7 @@ const InteractiveLabeler = () => {
 
       if (layerData?.imagery?.preEventTileUrl) {
         loadImagery(
-          layerData.imagery.preEventTileUrl,
+          toBrowserTitilerUrl(layerData.imagery.preEventTileUrl),
           map,
           { current: null },
           "preEventImageryLayer",
@@ -332,7 +332,7 @@ const InteractiveLabeler = () => {
       }
       if (layerData?.imagery?.postEventTileUrl) {
         loadImagery(
-          layerData.imagery.postEventTileUrl,
+          toBrowserTitilerUrl(layerData.imagery.postEventTileUrl),
           map,
           { current: null },
           "postEventImageryLayer",
