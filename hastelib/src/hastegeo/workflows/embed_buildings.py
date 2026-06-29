@@ -720,9 +720,11 @@ def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
       overall archive is small and pans / overview navigation feel fast.
       Density-aware dropping picks the survivors (--drop-densest-as-needed).
     - At z=14 (the labeler's working zoom and our --maximum-zoom), keep
-      EVERY building — both --limit-tile-feature-count-at-maximum-zoom=0
-      and --no-tile-size-limit suppress the per-tile caps so no building
-      is dropped, regardless of density.
+      EVERY building — --limit-tile-feature-count-at-maximum-zoom=0,
+      --no-tile-size-limit, and --no-tiny-polygon-reduction-at-maximum-zoom
+      together suppress the per-tile feature-count cap, the per-tile size
+      cap, and the "drop too-small polygons" rule, so no building is
+      dropped regardless of footprint area or density.
     - Zoom levels above 14 are rendered by the SDK via overzoom of the
       z=14 tiles; the Interactive Labeler's queryRenderedFeatures /
       setFeatureState work unchanged on overzoomed tiles.
@@ -751,6 +753,13 @@ def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
         # Browser load is still tile-streamed (only viewport tiles fetched),
         # so a few-MB max-zoom tile is acceptable on the labeler path.
         "--no-tile-size-limit",
+        # Suppress tippecanoe's default "drop polygons that simplify to less
+        # than ~2 tile units" rule AT THE MAXIMUM ZOOM. Without this, small
+        # building footprints get silently dropped from z=14 tiles too —
+        # exactly the rows the labeler needs to be able to label. At lower
+        # zooms the default tiny-polygon reduction still applies; that's
+        # fine because the labeler only operates at z=14+ (overzoom).
+        "--no-tiny-polygon-reduction-at-maximum-zoom",
         # Skip world-scale zooms entirely — buildings are invisible at
         # z<10 anyway, so generating tiles there only adds bytes.
         "--minimum-zoom=10",
