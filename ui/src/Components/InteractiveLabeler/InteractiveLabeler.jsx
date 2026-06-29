@@ -21,6 +21,7 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
+  ActionButton,
   ChoiceGroup,
   DefaultButton,
   PrimaryButton,
@@ -1088,23 +1089,25 @@ const InteractiveLabeler = () => {
         overflow: "hidden",
       }}
     >
-      <button
-        onClick={() => navigate(`/project/${projectId}`)}
+      <div
         style={{
           position: "absolute",
-          top: 12,
-          left: 12,
+          top: 10,
+          left: 10,
           zIndex: 1000,
-          background: "rgba(255,255,255,0.9)",
-          border: "1px solid #ccc",
-          borderRadius: 4,
-          padding: "6px 14px",
-          cursor: "pointer",
-          fontWeight: 500,
+          backgroundColor: "rgba(255, 255, 255, 1)",
+          padding: "5px 10px",
+          borderRadius: "5px",
         }}
       >
-        ← Back to Project
-      </button>
+        <ActionButton
+          id="backButton"
+          iconProps={{ iconName: "ChevronLeft" }}
+          onClick={() => navigate(`/project/${projectId}`)}
+        >
+          Back
+        </ActionButton>
+      </div>
 
       <div
         ref={mapContainerRef}
