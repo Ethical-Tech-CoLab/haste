@@ -919,6 +919,79 @@ const InteractiveLabeler = () => {
     }
   }
 
+  // ── Clear all labels (in-memory + persisted) ──────────────────────────────
+  // Wipes the in-session labeledMap, drops the cached model (so the next
+  // predict pass falls back to "need more labels"), removes the label
+  // feature-state for every rendered building, AND overwrites the
+  // persisted store with an empty document so revisiting the labeler
+  // doesn't restore the cleared labels.
+  function handleClearLabels() {
+    const total =
+      counts[CLASS_INTACT] + counts[CLASS_DAMAGED] + counts[CLASS_CLOUDY];
+    const message =
+      total > 0
+        ? `Clear all ${total} label(s) for this model? This also removes them from the saved store and cannot be undone.`
+        : "Clear any saved labels for this model? This cannot be undone.";
+    setDialog("Are you sure?", message, [
+      {
+        type: "primary",
+        key: "yes",
+        text: "Clear labels",
+        onClick: async () => {
+          setDialog();
+          setIsLoading(true, "Clearing labels…");
+          try {
+            // Drop the label feature-state on every currently-rendered
+            // building (so the map repaints to the unlabeled color).
+            const gl = glMapRef.current;
+            const layers = internalLayerIdsRef.current;
+            if (gl && layers.length) {
+              let rendered = [];
+              try {
+                rendered = gl.queryRenderedFeatures(undefined, { layers });
+              } catch {
+                rendered = [];
+              }
+              for (const f of rendered) {
+                if (f.id != null) {
+                  clearFeatureStateLabel(f.source, f.id);
+                }
+              }
+            }
+            // In-memory reset.
+            labeledMapRef.current = {};
+            savedLabelsRef.current = {};
+            trainedModelRef.current = null;
+            labelsDirtyRef.current = true;
+            refreshCounts();
+            setMetrics(null);
+            setStatus("Cleared all labels.");
+            // Persist the empty document so revisits don't re-hydrate
+            // stale labels. PutInteractiveLabels is a whole-doc replace.
+            await apiPut("PutInteractiveLabels", {
+              projectId,
+              imageLayerId,
+              modelId,
+              labels: {},
+            });
+          } catch (e) {
+            console.error("Error clearing labels:", e);
+            setDialog("Error", "Failed to clear labels from the server.");
+            return;
+          } finally {
+            setIsLoading(false);
+          }
+        },
+      },
+      {
+        type: "default",
+        key: "no",
+        text: "Cancel",
+        onClick: () => setDialog(),
+      },
+    ]);
+  }
+
   // ── Full-coverage Predict-all-buildings flow ──────────────────────────────
   // Downloads the full embeddings GeoJSON once, trains the OvR model on every
   // available label, batches predict over every building with a progress
@@ -1223,6 +1296,12 @@ const InteractiveLabeler = () => {
             onClick={handlePredictAll}
             style={{ marginTop: 8, width: "100%" }}
             title="Run the trained model across every building in the layer (not just the viewport) and persist the predictions for the Validation / Assessment reports."
+          />
+          <DefaultButton
+            text="Clear labels"
+            onClick={handleClearLabels}
+            style={{ marginTop: 8, width: "100%", color: "#a4262c" }}
+            title="Remove every label for this model — both in-session and in the saved store."
           />
 
           <div style={{ marginTop: 12, fontSize: 11, color: "#999" }}>
