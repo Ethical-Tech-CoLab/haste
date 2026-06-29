@@ -288,20 +288,30 @@ const InteractiveLabeler = () => {
       // No saved labels yet — start fresh.
     }
 
+    // Resolve an initial camera position from the PMTiles header. The Map
+    // constructor accepts {center, zoom} reliably (the {bounds} variant is
+    // honored by setCamera but is silently ignored at construction time on
+    // some Atlas builds — leaving the map at its default and the user
+    // staring at empty water). centerLon/centerLat come from the PMTiles
+    // header; centerZoom is the tippecanoe-suggested default (z<=maxZoom).
+    let initialCamera = { center: [0, 0], zoom: 3 };
+    if (pmtilesHeader) {
+      const haveCenter =
+        pmtilesHeader.centerLon != null && pmtilesHeader.centerLat != null;
+      const centerLon = haveCenter
+        ? pmtilesHeader.centerLon
+        : (pmtilesHeader.minLon + pmtilesHeader.maxLon) / 2;
+      const centerLat = haveCenter
+        ? pmtilesHeader.centerLat
+        : (pmtilesHeader.minLat + pmtilesHeader.maxLat) / 2;
+      const zoom =
+        pmtilesHeader.centerZoom ||
+        Math.max(10, (pmtilesHeader.maxZoom || 14) - 1);
+      initialCamera = { center: [centerLon, centerLat], zoom };
+    }
+
     const map = new window.atlas.Map(mapContainerRef.current, {
-      // If we have PMTiles bounds, pre-position the camera there. Otherwise
-      // fall back to a global view (a broken pmtiles will land here).
-      ...(pmtilesHeader
-        ? {
-            bounds: [
-              pmtilesHeader.minLon,
-              pmtilesHeader.minLat,
-              pmtilesHeader.maxLon,
-              pmtilesHeader.maxLat,
-            ],
-            padding: 50,
-          }
-        : { center: [0, 0], zoom: 3 }),
+      ...initialCamera,
       maxPitch: 0,
       pitch: 0,
       style: isAzureMapsPlaceholder ? "blank" : "satellite",
