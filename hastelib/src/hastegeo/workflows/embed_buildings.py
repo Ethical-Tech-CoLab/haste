@@ -712,14 +712,13 @@ def embed_footprints(
 def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
     """Convert a GeoJSON to PMTiles via tippecanoe.
 
-    Simplified flag set: tippecanoe's default tile-size cap (500 KB) is
-    re-enabled, the per-tile feature-count cap is left at the default,
-    and the explicit max-zoom is bumped to 15. ``--no-tiny-polygon-reduction``
-    suppresses the "drop tiny polygons" rule at EVERY zoom so even the
-    smallest footprints survive into the archive. ``--drop-densest-as-needed``
-    still kicks in if a tile would exceed tippecanoe's default size cap;
-    when it does, the densest features get culled in favor of overall
-    coverage at that zoom level.
+    Conservative flag set tuned to keep as many buildings as possible at
+    every zoom — the labeler needs to be able to address each footprint
+    individually, so silent drops are worse than larger tiles. All the
+    "drop X" defaults that tippecanoe applies are disabled below;
+    ``--drop-densest-as-needed`` is kept only as a last-resort safety
+    valve if a tile somehow still exceeds tippecanoe's internal hard
+    limits.
     """
     cmd = [
         "tippecanoe",
@@ -734,22 +733,32 @@ def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
         # not honor client-side promoteId).
         "--use-attribute-for-id=id",
         "--force",
-        # Cull tiles' world-scale levels — buildings are invisible below
-        # z=10, so generating tiles there only adds bytes.
+        # Cull world-scale levels — buildings are invisible below z=10,
+        # so generating tiles there only adds bytes.
         "--minimum-zoom=10",
         # Pin the max zoom to the labeler's working zoom + 1. Tiles at
         # z>15 are rendered by the SDK via overzoom; the interactive
         # labeler's queryRenderedFeatures + setFeatureState work unchanged
         # on overzoomed tiles.
         "--maximum-zoom=15",
-        # Drop densest features only when the per-tile size or count caps
-        # would otherwise be exceeded; the survivors are picked by
-        # density so coverage stays uniform.
+        # Disable the default 500 KB tile-size cap so a dense max-zoom
+        # tile carrying every building's f_* row doesn't trigger drops.
+        # Browser load is still tile-streamed (only viewport tiles
+        # fetched), so a few-MB max-zoom tile is fine.
+        "--no-tile-size-limit",
+        # Last-resort safety valve: drop the densest features if a tile
+        # would somehow still exceed tippecanoe's internal hard limits.
+        # With --no-tile-size-limit and no feature-count cap this should
+        # essentially never trigger; we keep it so the build doesn't
+        # error out if it ever does.
         "--drop-densest-as-needed",
-        # Suppress tippecanoe's default tiny-polygon reduction at all
-        # zooms — without this, small / narrow building footprints are
-        # silently dropped even when no feature- or size-cap is in play.
+        # Suppress the default tiny-polygon reduction at every zoom — small
+        # / narrow footprints (sheds, kiosks, narrow row-houses) would
+        # otherwise be silently dropped even when no count/size cap is in
+        # play. The "-at-maximum-zoom" variant is redundant with the
+        # global flag but the user asked for both; it doesn't hurt.
         "--no-tiny-polygon-reduction",
+        "--no-tiny-polygon-reduction-at-maximum-zoom",
         geojson_path,
     ]
     log_progress(f"Running tippecanoe -> {os.path.basename(pmtiles_path)}")
