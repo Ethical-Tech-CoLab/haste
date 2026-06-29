@@ -44,7 +44,6 @@ const CreateEditModelTrainingModal = ({
     eventTypes: proptypes.array.isRequired,
   };
   
-  console.log("CreateEditModelTrainingModal eventTypes:", eventTypes);
   const { setDialog, appParams, setIsLoading, initCurrentTour } =
     useContext(AppContext);
   const [componentState, setComponentState] = useState(null);
