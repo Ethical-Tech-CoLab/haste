@@ -352,6 +352,16 @@ const InteractiveLabeler = () => {
       // Footprints come from the PMTiles archive (tippecanoe -l buildings,
       // with --use-attribute-for-id=id so each MVT feature carries the
       // native integer feature id needed by setFeatureState).
+      // Footprints come from the PMTiles archive (tippecanoe -l buildings,
+      // with --use-attribute-for-id=id so each MVT feature carries the
+      // native integer feature id needed by setFeatureState).
+      //
+      // Deliberately do NOT pass minSourceZoom/maxSourceZoom here: the
+      // pmtiles.js protocol handler advertises the archive's actual zoom
+      // range to the renderer via its TileJSON response, and the renderer
+      // then overzooms tiles at z>maxZoom automatically. Setting
+      // maxSourceZoom explicitly capped at 14 makes Atlas treat z>14 as
+      // "source has no data" and stop rendering past that zoom.
       const source = new window.atlas.source.VectorTileSource("buildings", {
         type: "vector",
         url: `pmtiles://${browserPmtilesUrl}`,
@@ -360,15 +370,12 @@ const InteractiveLabeler = () => {
         // in, so it's harmless to pass. Useful as a hint for any future
         // SDK update that honors it.
         promoteId: { [PMTILES_SOURCE_LAYER]: "id" },
-        ...(pmtilesHeader
-          ? {
-              minSourceZoom: pmtilesHeader.minZoom,
-              maxSourceZoom: pmtilesHeader.maxZoom,
-            }
-          : {}),
       });
       map.sources.add(source);
 
+      // Layer maxZoom > source maxzoom is how the renderer is told to
+      // overzoom: vector tiles get scaled up for z>source.maxzoom up to
+      // the layer's maxZoom. 24 is the Mapbox/Atlas hard ceiling.
       const fillLayer = new window.atlas.layer.PolygonLayer(
         "buildings",
         "embeddingFill",
@@ -376,6 +383,7 @@ const InteractiveLabeler = () => {
           sourceLayer: PMTILES_SOURCE_LAYER,
           fillColor: fillColorExpr("label"),
           fillOpacity: 0.5,
+          maxZoom: 24,
         }
       );
       map.layers.add(fillLayer);
@@ -385,6 +393,7 @@ const InteractiveLabeler = () => {
           sourceLayer: PMTILES_SOURCE_LAYER,
           strokeColor: "#1a5276",
           strokeWidth: 1,
+          maxZoom: 24,
         })
       );
 
