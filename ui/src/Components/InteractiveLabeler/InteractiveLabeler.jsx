@@ -289,20 +289,30 @@ const InteractiveLabeler = () => {
       // No saved labels yet — start fresh.
     }
 
+    // Resolve an initial camera position from the PMTiles header. The Map
+    // constructor accepts {center, zoom} reliably (the {bounds} variant is
+    // honored by setCamera but is silently ignored at construction time on
+    // some Atlas builds — leaving the map at its default and the user
+    // staring at empty water). centerLon/centerLat come from the PMTiles
+    // header; centerZoom is the tippecanoe-suggested default (z<=maxZoom).
+    let initialCamera = { center: [0, 0], zoom: 3 };
+    if (pmtilesHeader) {
+      const haveCenter =
+        pmtilesHeader.centerLon != null && pmtilesHeader.centerLat != null;
+      const centerLon = haveCenter
+        ? pmtilesHeader.centerLon
+        : (pmtilesHeader.minLon + pmtilesHeader.maxLon) / 2;
+      const centerLat = haveCenter
+        ? pmtilesHeader.centerLat
+        : (pmtilesHeader.minLat + pmtilesHeader.maxLat) / 2;
+      const zoom =
+        pmtilesHeader.centerZoom ||
+        Math.max(10, (pmtilesHeader.maxZoom || 14) - 1);
+      initialCamera = { center: [centerLon, centerLat], zoom };
+    }
+
     const map = new window.atlas.Map(mapContainerRef.current, {
-      // If we have PMTiles bounds, pre-position the camera there. Otherwise
-      // fall back to a global view (a broken pmtiles will land here).
-      ...(pmtilesHeader
-        ? {
-            bounds: [
-              pmtilesHeader.minLon,
-              pmtilesHeader.minLat,
-              pmtilesHeader.maxLon,
-              pmtilesHeader.maxLat,
-            ],
-            padding: 50,
-          }
-        : { center: [0, 0], zoom: 3 }),
+      ...initialCamera,
       maxPitch: 0,
       pitch: 0,
       style: isAzureMapsPlaceholder ? "blank" : "satellite",
@@ -343,6 +353,16 @@ const InteractiveLabeler = () => {
       // Footprints come from the PMTiles archive (tippecanoe -l buildings,
       // with --use-attribute-for-id=id so each MVT feature carries the
       // native integer feature id needed by setFeatureState).
+      // Footprints come from the PMTiles archive (tippecanoe -l buildings,
+      // with --use-attribute-for-id=id so each MVT feature carries the
+      // native integer feature id needed by setFeatureState).
+      //
+      // Deliberately do NOT pass minSourceZoom/maxSourceZoom here: the
+      // pmtiles.js protocol handler advertises the archive's actual zoom
+      // range to the renderer via its TileJSON response, and the renderer
+      // then overzooms tiles at z>maxZoom automatically. Setting
+      // maxSourceZoom explicitly capped at 14 makes Atlas treat z>14 as
+      // "source has no data" and stop rendering past that zoom.
       const source = new window.atlas.source.VectorTileSource("buildings", {
         type: "vector",
         url: `pmtiles://${browserPmtilesUrl}`,
@@ -351,15 +371,12 @@ const InteractiveLabeler = () => {
         // in, so it's harmless to pass. Useful as a hint for any future
         // SDK update that honors it.
         promoteId: { [PMTILES_SOURCE_LAYER]: "id" },
-        ...(pmtilesHeader
-          ? {
-              minSourceZoom: pmtilesHeader.minZoom,
-              maxSourceZoom: pmtilesHeader.maxZoom,
-            }
-          : {}),
       });
       map.sources.add(source);
 
+      // Layer maxZoom > source maxzoom is how the renderer is told to
+      // overzoom: vector tiles get scaled up for z>source.maxzoom up to
+      // the layer's maxZoom. 24 is the Mapbox/Atlas hard ceiling.
       const fillLayer = new window.atlas.layer.PolygonLayer(
         "buildings",
         "embeddingFill",
@@ -929,6 +946,79 @@ const InteractiveLabeler = () => {
     }
   }
 
+  // ── Clear all labels (in-memory + persisted) ──────────────────────────────
+  // Wipes the in-session labeledMap, drops the cached model (so the next
+  // predict pass falls back to "need more labels"), removes the label
+  // feature-state for every rendered building, AND overwrites the
+  // persisted store with an empty document so revisiting the labeler
+  // doesn't restore the cleared labels.
+  function handleClearLabels() {
+    const total =
+      counts[CLASS_INTACT] + counts[CLASS_DAMAGED] + counts[CLASS_CLOUDY];
+    const message =
+      total > 0
+        ? `Clear all ${total} label(s) for this model? This also removes them from the saved store and cannot be undone.`
+        : "Clear any saved labels for this model? This cannot be undone.";
+    setDialog("Are you sure?", message, [
+      {
+        type: "primary",
+        key: "yes",
+        text: "Clear labels",
+        onClick: async () => {
+          setDialog();
+          setIsLoading(true, "Clearing labels…");
+          try {
+            // Drop the label feature-state on every currently-rendered
+            // building (so the map repaints to the unlabeled color).
+            const gl = glMapRef.current;
+            const layers = internalLayerIdsRef.current;
+            if (gl && layers.length) {
+              let rendered = [];
+              try {
+                rendered = gl.queryRenderedFeatures(undefined, { layers });
+              } catch {
+                rendered = [];
+              }
+              for (const f of rendered) {
+                if (f.id != null) {
+                  clearFeatureStateLabel(f.source, f.id);
+                }
+              }
+            }
+            // In-memory reset.
+            labeledMapRef.current = {};
+            savedLabelsRef.current = {};
+            trainedModelRef.current = null;
+            labelsDirtyRef.current = true;
+            refreshCounts();
+            setMetrics(null);
+            setStatus("Cleared all labels.");
+            // Persist the empty document so revisits don't re-hydrate
+            // stale labels. PutInteractiveLabels is a whole-doc replace.
+            await apiPut("PutInteractiveLabels", {
+              projectId,
+              imageLayerId,
+              modelId,
+              labels: {},
+            });
+          } catch (e) {
+            console.error("Error clearing labels:", e);
+            setDialog("Error", "Failed to clear labels from the server.");
+            return;
+          } finally {
+            setIsLoading(false);
+          }
+        },
+      },
+      {
+        type: "default",
+        key: "no",
+        text: "Cancel",
+        onClick: () => setDialog(),
+      },
+    ]);
+  }
+
   // ── Full-coverage Predict-all-buildings flow ──────────────────────────────
   // Downloads the full embeddings GeoJSON once, trains the OvR model on every
   // available label, batches predict over every building with a progress
@@ -1235,6 +1325,12 @@ const InteractiveLabeler = () => {
             onClick={handlePredictAll}
             style={{ marginTop: 8, width: "100%" }}
             title="Run the trained model across every building in the layer (not just the viewport) and persist the predictions for the Validation / Assessment reports."
+          />
+          <DefaultButton
+            text="Clear labels"
+            onClick={handleClearLabels}
+            style={{ marginTop: 8, width: "100%", color: "#a4262c" }}
+            title="Remove every label for this model — both in-session and in the saved store."
           />
 
           <div style={{ marginTop: 12, fontSize: 11, color: "#999" }}>
