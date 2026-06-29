@@ -710,7 +710,16 @@ def embed_footprints(
 
 
 def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
-    """Convert a GeoJSON to PMTiles via tippecanoe (inlined to_pmtiles.sh)."""
+    """Convert a GeoJSON to PMTiles via tippecanoe.
+
+    Tile size budget at low zoom matters a lot here: every feature carries
+    the f_* embedding columns (typically 1024 floats), so a tile with even
+    a few hundred buildings can balloon to multiple MB. The tippecanoe
+    flags below trade low-zoom completeness for size by aggressively
+    dropping features in dense areas, while still keeping *every* building
+    at the maximum zoom (so the Interactive Labeler — which only runs at
+    high zoom — sees them all when training/predicting in the viewport).
+    """
     cmd = [
         "tippecanoe",
         "-o",
@@ -723,11 +732,24 @@ def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
         # MapLibre and Azure Maps need this (Azure Maps' VectorTileSource does
         # not honor client-side promoteId).
         "--use-attribute-for-id=id",
-        "--no-tile-size-limit",
         "--force",
+        # Drop densest features when a tile would exceed the size budget OR
+        # the per-tile feature count cap below. The two together keep low-
+        # zoom tiles small without us having to pre-decimate the dataset.
         "--drop-densest-as-needed",
-        "--limit-tile-feature-count=1500",
+        # Hard cap of 200 features per tile at intermediate zooms. With f_*
+        # in every feature (~4 KB / feature at 1024 floats) this keeps even
+        # a dense urban z=12 tile well under the 500 KB default size limit.
+        # The full set is kept at the maximum zoom (see the next flag).
+        "--limit-tile-feature-count=200",
+        # ...but at the max zoom (which the labeler operates at) keep ALL
+        # buildings — there's no point in clicking on a building you can't
+        # see, and viewport predict needs every f_* in view.
         "--limit-tile-feature-count-at-maximum-zoom=0",
+        # Skip world-scale zooms entirely — building footprints are
+        # invisible at z<10 anyway, so generating tiles there only adds
+        # bytes (and a noisy spray of dropped-densest dots).
+        "--minimum-zoom=10",
         "-zg",
         geojson_path,
     ]
