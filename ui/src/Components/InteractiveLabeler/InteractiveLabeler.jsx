@@ -21,6 +21,7 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
+  ActionButton,
   ChoiceGroup,
   DefaultButton,
   PrimaryButton,
@@ -34,7 +35,7 @@ import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
 } from "../../util/azureMapsAuth";
-import { toBrowserBlobUrl } from "../../util/blobUrl";
+import { toBrowserBlobUrl, toBrowserTitilerUrl } from "../../util/blobUrl";
 import { AppContext } from "../../AppContext.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 import {
@@ -332,7 +333,7 @@ const InteractiveLabeler = () => {
 
       if (layerData?.imagery?.preEventTileUrl) {
         loadImagery(
-          layerData.imagery.preEventTileUrl,
+          toBrowserTitilerUrl(layerData.imagery.preEventTileUrl),
           map,
           { current: null },
           "preEventImageryLayer",
@@ -341,7 +342,7 @@ const InteractiveLabeler = () => {
       }
       if (layerData?.imagery?.postEventTileUrl) {
         loadImagery(
-          layerData.imagery.postEventTileUrl,
+          toBrowserTitilerUrl(layerData.imagery.postEventTileUrl),
           map,
           { current: null },
           "postEventImageryLayer",
@@ -382,8 +383,11 @@ const InteractiveLabeler = () => {
         {
           sourceLayer: PMTILES_SOURCE_LAYER,
           fillColor: fillColorExpr("label"),
-          fillOpacity: 0.5,
-          maxZoom: 24,
+          fillOpacity: [
+            "step", ["zoom"],
+            0.01, // below zoom 15: nearly invisible
+            15, 0.5, // at zoom 15+: normal
+          ],
         }
       );
       map.layers.add(fillLayer);
@@ -393,7 +397,11 @@ const InteractiveLabeler = () => {
           sourceLayer: PMTILES_SOURCE_LAYER,
           strokeColor: "#1a5276",
           strokeWidth: 1,
-          maxZoom: 24,
+          strokeOpacity: [
+            "step", ["zoom"],
+            0.01, // below zoom 15: nearly invisible
+            15, 1, // at zoom 15+: normal
+          ],
         })
       );
 
@@ -1180,23 +1188,25 @@ const InteractiveLabeler = () => {
         overflow: "hidden",
       }}
     >
-      <button
-        onClick={() => navigate(`/project/${projectId}`)}
+      <div
         style={{
           position: "absolute",
-          top: 12,
-          left: 12,
+          left: 10,
+          top: 10,
+          backgroundColor: "rgba(255, 255, 255, 1)",
+          padding: "5px 10px",
+          borderRadius: "5px",
           zIndex: 1000,
-          background: "rgba(255,255,255,0.9)",
-          border: "1px solid #ccc",
-          borderRadius: 4,
-          padding: "6px 14px",
-          cursor: "pointer",
-          fontWeight: 500,
         }}
       >
-        ← Back to Project
-      </button>
+        <ActionButton
+          id="backButton"
+          iconProps={{ iconName: "ChevronLeft" }}
+          onClick={() => navigate(`/project/${projectId}`)}
+        >
+          Back
+        </ActionButton>
+      </div>
 
       <div
         ref={mapContainerRef}

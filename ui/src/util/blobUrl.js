@@ -31,3 +31,23 @@ export function toBrowserBlobUrl(url) {
   parsed.hostname = window.location.hostname;
   return parsed.toString();
 }
+
+// Interactive Labeler imagery tiles are served by titiler. Tile-URL templates
+// are persisted with the deployment-relative `/api/titiler/<path>` prefix,
+// which in the cloud is routed by APIM (and in docker by the nginx api-proxy).
+// Running the UI locally via `swa start` there is no such route, so imagery
+// 404s. When VITE_TITILER_URL is set AND the UI is on localhost, rewrite that
+// prefix to a directly-reachable titiler base. No-op in production (non-local
+// host) and when the env var is unset, so it's safe to ship.
+export function toBrowserTitilerUrl(url) {
+  if (typeof url !== "string" || !url) return url;
+  if (typeof window === "undefined") return url;
+  const localHosts = new Set(["localhost", "127.0.0.1"]);
+  if (!localHosts.has(window.location.hostname)) return url;
+  const base = import.meta.env.VITE_TITILER_URL;
+  if (!base) return url;
+  const marker = "/api/titiler/";
+  const idx = url.indexOf(marker);
+  if (idx === -1) return url;
+  return base.replace(/\/+$/, "") + "/" + url.slice(idx + marker.length);
+}
