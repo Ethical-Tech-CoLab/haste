@@ -714,11 +714,18 @@ def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
 
     Tile size budget at low zoom matters a lot here: every feature carries
     the f_* embedding columns (typically 1024 floats), so a tile with even
-    a few hundred buildings can balloon to multiple MB. The tippecanoe
-    flags below trade low-zoom completeness for size by aggressively
-    dropping features in dense areas, while still keeping *every* building
-    at the maximum zoom (so the Interactive Labeler — which only runs at
-    high zoom — sees them all when training/predicting in the viewport).
+    a few hundred buildings can balloon to multiple MB. The strategy:
+
+    - At z=10..13 (intermediate), cap each tile at 200 features so the
+      overall archive is small and pans / overview navigation feel fast.
+      Density-aware dropping picks the survivors (--drop-densest-as-needed).
+    - At z=14 (the labeler's working zoom and our --maximum-zoom), keep
+      EVERY building — both --limit-tile-feature-count-at-maximum-zoom=0
+      and --no-tile-size-limit suppress the per-tile caps so no building
+      is dropped, regardless of density.
+    - Zoom levels above 14 are rendered by the SDK via overzoom of the
+      z=14 tiles; the Interactive Labeler's queryRenderedFeatures /
+      setFeatureState work unchanged on overzoomed tiles.
     """
     cmd = [
         "tippecanoe",
@@ -733,24 +740,25 @@ def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
         # not honor client-side promoteId).
         "--use-attribute-for-id=id",
         "--force",
-        # Drop densest features when a tile would exceed the size budget OR
-        # the per-tile feature count cap below. The two together keep low-
-        # zoom tiles small without us having to pre-decimate the dataset.
+        # Density-aware feature dropping. At z<14 this trims dense tiles to
+        # fit the per-tile feature count cap below; at z=14 the next two
+        # flags disable both caps so all features are kept.
         "--drop-densest-as-needed",
-        # Hard cap of 200 features per tile at intermediate zooms. With f_*
-        # in every feature (~4 KB / feature at 1024 floats) this keeps even
-        # a dense urban z=12 tile well under the 500 KB default size limit.
-        # The full set is kept at the maximum zoom (see the next flag).
         "--limit-tile-feature-count=200",
-        # ...but at the max zoom (which the labeler operates at) keep ALL
-        # buildings — there's no point in clicking on a building you can't
-        # see, and viewport predict needs every f_* in view.
         "--limit-tile-feature-count-at-maximum-zoom=0",
-        # Skip world-scale zooms entirely — building footprints are
-        # invisible at z<10 anyway, so generating tiles there only adds
-        # bytes (and a noisy spray of dropped-densest dots).
+        # No size limit so z=14 tiles can carry every building's f_* row
+        # without tippecanoe spilling them via the default 500 KB cap.
+        # Browser load is still tile-streamed (only viewport tiles fetched),
+        # so a few-MB max-zoom tile is acceptable on the labeler path.
+        "--no-tile-size-limit",
+        # Skip world-scale zooms entirely — buildings are invisible at
+        # z<10 anyway, so generating tiles there only adds bytes.
         "--minimum-zoom=10",
-        "-zg",
+        # Pin the max zoom to the labeler's working zoom. Anchored here so
+        # the "keep all features" rule above applies at z=14 (instead of
+        # whatever depth -zg would have guessed, which with f_* columns
+        # tends to be z=17+ and would leave z=14-16 hitting the 200 cap).
+        "--maximum-zoom=14",
         geojson_path,
     ]
     log_progress(f"Running tippecanoe -> {os.path.basename(pmtiles_path)}")
