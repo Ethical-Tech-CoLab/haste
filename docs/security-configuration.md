@@ -302,6 +302,15 @@ The UI's logout flow validates the `redirectPath` parameter via `sanitizeRedirec
 - **`azurite` removed from `package.json`**: Developers must now install Azurite globally (`npm install -g azurite`). No production impact.
 - **Imagery URL allowlist enforced (post-v1.4.1)**: `PutLayer` now rejects requests whose `preEventImageryUrls` or `postEventImageryUrls` contain a host outside `*.blob.core.windows.net` or `*.amazonaws.com`. The pre-existing batch-download code silently skipped such URLs, so this change makes the rejection visible at submission time rather than producing failed jobs with empty outputs. Customers with API integrations that submit imagery from other sources must move that imagery into an allowlisted source before upgrading, or the affected layer-creation calls will fail.
 
+### 8.8 GDAL driver allowlist and ingestion size/type limits
+
+GDAL `3.9.2` is pinned (no trusted prebuilt pip wheel exists for the patched 3.13 line under HASTE's runtime), so three memory-safety CVEs — most notably **CVE-2026-8087**, a heap overflow in the HDF4/HDF-EOS driver — are deferred under a documented exception with **compensating controls enforced in code** (see [`known-vulnerabilities.md`](https://github.com/microsoft/haste/blob/main/docs/known-vulnerabilities.md) Root Cause C and [ADR-0003](https://github.com/microsoft/haste/blob/main/spec/architecture/decisions/0003-gdal-driver-allowlist.md)).
+
+- **Driver allowlist.** At process startup `hastegeo.core.utils.gdal_security.harden_gdal()` restricts GDAL/OGR to the drivers HASTE actually uses (raster `GTiff, COG, VRT, JPEG, PNG, MEM`; vector `GPKG, GeoJSON, Memory`) by deregistering every other driver. Because GDAL dispatches by sniffing file *content* (not the extension), this removes the vulnerable HDF4/HDF-EOS code path from every `gdal.Open`/`rasterio.open`/`pyogrio` read in-process. The imageryprep and training containers also set `GDAL_SKIP="HDF4 HDF4Image HDF5 HDF5Image netCDF"` so subprocess GDAL CLI tools (`gdalwarp`/`gdal_translate`) refuse those drivers too.
+- **Ingestion size/type limits.** Chunked uploads are capped (`HASTE_MAX_UPLOAD_BYTES`, default 5 GiB) and the assembled file's magic bytes must match its declared format before GDAL parses it. Remote imagery fetches are capped (`HASTE_MAX_IMAGERY_DOWNLOAD_BYTES`, default 8 GiB) and refuse cross-host redirects (SSRF guard). Defaults are generous because satellite COGs are legitimately large; tune them to your largest expected imagery.
+
+**Operator action:** keep `GDAL_SKIP` set in any custom GDAL-bearing image, and do not add file formats to the pipeline without extending the allowlist in `gdal_security.py`. If you legitimately need a format outside the allowlist, add its driver explicitly rather than disabling the control.
+
 Each HASTE release documents security-relevant changes in [`CHANGELOG.md`](https://github.com/microsoft/haste/blob/main/CHANGELOG.md). The rolling list of acknowledged dependency vulnerabilities — fixed, dismissed with rationale, or pending — is maintained at [`docs/known-vulnerabilities.md`](https://github.com/microsoft/haste/blob/main/docs/known-vulnerabilities.md).
 
 ---
