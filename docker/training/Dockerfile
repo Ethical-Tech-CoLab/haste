@@ -3,6 +3,14 @@ FROM mcr.microsoft.com/azureml/curated/minimal-py312-cuda12.4-inference AS conda
 
 USER root
 
+# Pin micromamba's root prefix to the base image's conda root rather than relying
+# on auto-detection from the base image's conda activation. Without this,
+# `micromamba create -f env.yml` (name-based, no -p) can't resolve a root prefix
+# and aborts at startup ("tl::bad_expected_access ... Bad expected access").
+# Rooting it at /opt/miniconda also places the `bda` env at
+# /opt/miniconda/envs/bda, where the later `conda-pack -n bda` looks for it.
+ENV MAMBA_ROOT_PREFIX=/opt/miniconda
+
 # Install micromamba and conda-pack (micromamba avoids Python version conflicts).
 # Install conda-pack with micromamba rather than the base image's `conda`: a
 # plain `conda install conda-pack` also drags in a conda self-upgrade (26.5.0 ->
