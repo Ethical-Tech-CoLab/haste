@@ -43,8 +43,6 @@ import {
   CLASS_DAMAGED,
   CLASS_INTACT,
   OvRLogisticRegression,
-  detectFeatureKeys,
-  extractFeatureVector,
   holdoutMetricsDamaged,
   isValidVector,
 } from "./interactiveModel.js";
@@ -124,6 +122,60 @@ function fillColorExpr(stateKey) {
   ];
 }
 
+// Binary HFTR sidecar:
+//   bytes  0-3  : magic "HFTR"
+//   bytes  4-7  : u32 LE  version (currently 1)
+//   bytes  8-11 : u32 LE  num_buildings (= row count in the embeddings GeoJSON)
+//   bytes 12-15 : u32 LE  feat_dim
+//   bytes 16-..: f32 LE × num_buildings × feat_dim  (row-major, id-indexed)
+//
+// Each building's feature vector is stored at offset id*feat_dim. Non-finite
+// floats (off-raster placeholder rows) are preserved verbatim and rejected
+// downstream by isValidVector.
+const SIDECAR_MAGIC = [0x48, 0x46, 0x54, 0x52]; // "HFTR"
+const SIDECAR_VERSION = 1;
+
+async function fetchFeaturesSidecar(url) {
+  const t0 = performance.now();
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(
+      `Failed to fetch features sidecar (HTTP ${resp.status}) at ${url}`
+    );
+  }
+  const buf = await resp.arrayBuffer();
+  if (buf.byteLength < 16) {
+    throw new Error("Features sidecar is too short — header missing.");
+  }
+  const view = new DataView(buf);
+  for (let i = 0; i < 4; i++) {
+    if (view.getUint8(i) !== SIDECAR_MAGIC[i]) {
+      throw new Error("Features sidecar has wrong magic — not an HFTR file.");
+    }
+  }
+  const version = view.getUint32(4, /* littleEndian */ true);
+  if (version !== SIDECAR_VERSION) {
+    throw new Error(
+      `Features sidecar version ${version} not supported (need ${SIDECAR_VERSION}).`
+    );
+  }
+  const n = view.getUint32(8, true);
+  const d = view.getUint32(12, true);
+  const expected = 16 + n * d * 4;
+  if (buf.byteLength !== expected) {
+    throw new Error(
+      `Features sidecar size mismatch: expected ${expected} bytes (16 + ${n} * ${d} * 4), got ${buf.byteLength}.`
+    );
+  }
+  const matrix = new Float32Array(buf, 16, n * d);
+  const ms = Math.round(performance.now() - t0);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[InteractiveLabeler] sidecar loaded: ${n} buildings × ${d} dims (${(buf.byteLength / (1024 * 1024)).toFixed(1)} MB) in ${ms} ms`
+  );
+  return { matrix, n, d };
+}
+
 const InteractiveLabeler = () => {
   const { projectId, imageLayerId, modelId } = useParams();
   const navigate = useNavigate();
@@ -140,10 +192,11 @@ const InteractiveLabeler = () => {
   const internalSourceIdsRef = useRef([]);
   const internalLayerIdsRef = useRef([]);
 
-  // labeledMap: id -> { label, features }. predictionsMap: id -> class.
-  // These survive tile load/unload — they live in our React state, not on
-  // the rendered features. The map's feature-state mirrors them so the
-  // renderer can color buildings without re-reading our maps.
+  // labeledMap: id -> { label, features (Float32Array view), overtureId }.
+  // predictionsMap: id -> class. Both survive tile load/unload — they live
+  // in our React state, not on the rendered features. The map's feature-
+  // state mirrors them so the renderer can color buildings without re-
+  // reading our maps.
   const labeledMapRef = useRef({});
   const predictionsMapRef = useRef({});
   // Saved-labels keyed by Overture id, restored once from PutInteractiveLabels.
@@ -151,8 +204,13 @@ const InteractiveLabeler = () => {
   // (the rendered feature carries both the row-index id and overture_id),
   // so we cache the map and consult it on every moveend re-hydration.
   const savedLabelsRef = useRef({});
-  // Detected once on the first rendered feature with f_* props.
-  const featureKeysRef = useRef(null);
+  // Features sidecar: a single Float32Array of all per-building feature
+  // vectors, packed row-major (id × dim). Populated once on createMap from
+  // the HFTR binary sidecar (model.featuresSidecarUrl), then accessed via
+  // lookupFeatureVector(id) on every label / viewport-predict path. No
+  // more reading f_* from tile properties — PMTiles only carries id +
+  // overture_id now.
+  const sidecarRef = useRef(null); // { matrix: Float32Array, n, d }
 
   const boxRef = useRef(null); // box-select rectangle div
   const boxCleanupRef = useRef(null); // detaches document-level drag listeners
@@ -169,6 +227,7 @@ const InteractiveLabeler = () => {
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectedClass, setSelectedClass] = useState(CLASS_DAMAGED);
   const [viewMode, setViewMode] = useState("label"); // "label" | "predict"
+  const [showFootprints, setShowFootprints] = useState(true);
   const [counts, setCounts] = useState({ 0: 0, 1: 0, 2: 0 });
   const [viewportPredicted, setViewportPredicted] = useState(0);
   const [metrics, setMetrics] = useState(null);
@@ -243,6 +302,7 @@ const InteractiveLabeler = () => {
     // GetLayerModelsDetails; pick ours by modelId. The pmtilesUrl is
     // populated by the embedding workflow's postprocessor.
     let pmtilesUrl = "";
+    let sidecarUrl = "";
     try {
       const models = await apiGet(
         `GetLayerModelsDetails?projectId=${projectId}&imageLayerId=${imageLayerId}`
@@ -251,16 +311,23 @@ const InteractiveLabeler = () => {
         (m) => String(m.modelId) === String(modelId)
       );
       pmtilesUrl = model?.pmtilesUrl || "";
+      sidecarUrl = model?.featuresSidecarUrl || "";
     } catch (e) {
-      console.warn("Could not fetch model pmtilesUrl:", e);
+      console.warn("Could not fetch model URLs:", e);
     }
     if (!pmtilesUrl) {
       throw new Error(
         "No PMTiles available for this model — the embedding workflow has not produced building tiles."
       );
     }
+    if (!sidecarUrl) {
+      throw new Error(
+        "No features sidecar available for this model — re-embed the layer to produce one."
+      );
+    }
     // Dev-only host rewrite (azurite -> localhost). No-op in prod.
     const browserPmtilesUrl = toBrowserBlobUrl(pmtilesUrl);
+    const browserSidecarUrl = toBrowserBlobUrl(sidecarUrl);
 
     // Read the PMTiles header up front so we can place the camera over the
     // archive's bounds (otherwise the map sits at [0, 0] zoom 3 and the user
@@ -275,6 +342,15 @@ const InteractiveLabeler = () => {
     } catch (e) {
       console.warn("Failed to read PMTiles header (continuing):", e);
     }
+
+    // Fetch the binary features sidecar and parse the HFTR header. The
+    // resulting Float32Array view is the single source of truth for every
+    // f_* lookup downstream — the PMTiles archive itself only carries id +
+    // overture_id, so the labeler reads feature vectors here, not from
+    // tile properties.
+    setIsLoading(true, "Loading features…");
+    sidecarRef.current = await fetchFeaturesSidecar(browserSidecarUrl);
+    setIsLoading(true, "Loading Interactive Labeler");
 
     // Restore this model's previously-saved interactive labels (separate from
     // the Building Validation store). Labels are keyed by overture id; we
@@ -536,12 +612,6 @@ const InteractiveLabeler = () => {
     }
     if (features.length === 0) return;
 
-    // Detect feature keys once.
-    if (!featureKeysRef.current && features[0].properties) {
-      const keys = detectFeatureKeys(features[0].properties);
-      if (keys.length > 0) featureKeysRef.current = keys;
-    }
-
     // Restore any saved labels whose tiles are now in view.
     const saved = savedLabelsRef.current;
     if (saved && Object.keys(saved).length > 0) {
@@ -554,8 +624,8 @@ const InteractiveLabeler = () => {
         if (!entry) continue;
         const cls = VALIDATION_TO_CLASS[entry.label];
         if (cls == null) continue;
-        if (!featureKeysRef.current) continue;
-        const vec = extractFeatureVector(f.properties, featureKeysRef.current);
+        const vec = lookupFeatureVector(id);
+        if (!vec) continue;
         labeledMapRef.current[id] = {
           label: cls,
           features: vec,
@@ -649,13 +719,34 @@ const InteractiveLabeler = () => {
     if (viewMode === "predict") hydrateViewport(map);
   }, [viewMode, isMapReady]);
 
+  // Show / hide the buildings layers without unmounting them. Driven by
+  // the panel toggle + spacebar hotkey; the feature-state and the cached
+  // labels both survive a hide/show cycle.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    for (const layerId of ["embeddingFill", "embeddingOutline"]) {
+      const layer = map.layers.getLayerById?.(layerId);
+      if (layer) layer.setOptions({ visible: showFootprints });
+    }
+  }, [showFootprints, isMapReady]);
+
+  // ── Sidecar feature lookup ────────────────────────────────────────────────
+  // Returns a Float32Array view (no copy) into the sidecar matrix at the
+  // row for this building id, or null if the id is out of range / sidecar
+  // not yet loaded. The view is a zero-copy slice of the underlying buffer;
+  // callers should NOT mutate it.
+  function lookupFeatureVector(id) {
+    const sc = sidecarRef.current;
+    if (!sc) return null;
+    if (typeof id !== "number" || id < 0 || id >= sc.n) return null;
+    return sc.matrix.subarray(id * sc.d, (id + 1) * sc.d);
+  }
+
   // ── Labeling ──────────────────────────────────────────────────────────────
   function recordLabel(id, props, cls) {
-    if (!featureKeysRef.current) {
-      featureKeysRef.current = detectFeatureKeys(props || {});
-    }
-    if (!featureKeysRef.current.length) return false;
-    const vec = extractFeatureVector(props || {}, featureKeysRef.current);
+    const vec = lookupFeatureVector(id);
+    if (!vec) return false;
     // Capture the Overture id (when present) up front so the save path
     // doesn't have to guess. The persisted store is keyed by Overture id
     // (so labels survive a re-embed that renumbers row-index ids); the
@@ -844,17 +935,14 @@ const InteractiveLabeler = () => {
         setBackend((b) => b || "CPU");
       }
 
-      if (!featureKeysRef.current) return;
-      // Score only the buildings currently in the viewport.
+      // Score only the buildings currently in the viewport. Feature
+      // vectors come from the in-memory sidecar (no f_* in the tiles).
       const ids = [];
       const matrix = [];
       const sources = [];
       for (const f of viewportFeatures) {
         if (f.id == null) continue;
-        const vec = extractFeatureVector(
-          f.properties || {},
-          featureKeysRef.current
-        );
+        const vec = lookupFeatureVector(f.id);
         if (!isValidVector(vec)) continue;
         ids.push(f.id);
         matrix.push(vec);
@@ -880,7 +968,7 @@ const InteractiveLabeler = () => {
     }
   }
 
-  // ── Keyboard: 1/2/3 set class, T cycles, P toggles view ───────────────────
+  // ── Keyboard: 1/2/3 set class, T cycles, P toggles view, Space hides ─────
   useEffect(() => {
     function onKeyDown(e) {
       if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
@@ -891,6 +979,12 @@ const InteractiveLabeler = () => {
         setSelectedClass((c) => (c + 1) % 3);
       else if (e.key === "p" || e.key === "P")
         setViewMode((v) => (v === "label" ? "predict" : "label"));
+      else if (e.key === " " || e.code === "Space") {
+        // preventDefault to stop the browser from scrolling the page
+        // when the map container doesn't have focus.
+        e.preventDefault();
+        setShowFootprints((v) => !v);
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -1033,49 +1127,30 @@ const InteractiveLabeler = () => {
     }
 
     fullPredictAbortRef.current = { cancelled: false };
-    setFullPredict({ phase: "download", message: "Downloading embeddings…" });
+    setFullPredict({ phase: "train", message: "Training model…" });
 
     try {
-      // 1. Download the full embeddings GeoJSON. This is the one heavy
-      // network hit — the rendering path is tile-streamed.
-      const geojson = await apiGet(
-        `GetBuildingEmbeddingsGeoJSON?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
-      );
-      if (fullPredictAbortRef.current.cancelled) {
-        setFullPredict(null);
-        return;
-      }
-      const allFeatures = geojson?.features || [];
-      if (allFeatures.length === 0) {
-        throw new Error(
-          "No embeddings available — the embedding workflow has not produced any building features."
-        );
-      }
-
-      // 2. Detect feature keys + build (id, vector) arrays. Drop buildings
-      // with non-finite vectors (off-raster placeholders) — they keep a slot
-      // in the predictions output with cls = -1.
-      const keys = detectFeatureKeys(allFeatures[0].properties || {});
-      if (!keys.length) {
-        throw new Error("Embedding features have no f_* columns.");
-      }
+      // 1. The sidecar is already loaded — no network hit. Build (id, vector)
+      // arrays straight from the in-memory Float32Array, dropping buildings
+      // with non-finite vectors (off-raster placeholders).
+      const sc = sidecarRef.current;
+      if (!sc) throw new Error("Features sidecar not loaded yet.");
       const ids = [];
       const matrix = [];
-      for (const f of allFeatures) {
-        const vec = extractFeatureVector(f.properties || {}, keys);
+      for (let i = 0; i < sc.n; i++) {
+        const vec = sc.matrix.subarray(i * sc.d, (i + 1) * sc.d);
         if (!isValidVector(vec)) continue;
-        ids.push(f.properties?.id);
+        ids.push(i);
         matrix.push(vec);
       }
       if (matrix.length === 0) {
         throw new Error(
-          "No buildings with valid feature vectors in the downloaded embeddings."
+          "No buildings with valid feature vectors in the loaded sidecar."
         );
       }
 
-      // 3. Train the OvR model once on every label (CPU path — cheap to
+      // 2. Train the OvR model once on every label (CPU path — cheap to
       // train, predict-only is cheap per batch, and batch sizes are huge).
-      setFullPredict({ phase: "train", message: "Training model…" });
       const ovr = new OvRLogisticRegression({
         learningRate: 0.1,
         numSteps: 500,
@@ -1260,6 +1335,14 @@ const InteractiveLabeler = () => {
             style={{ marginTop: 12 }}
           />
 
+          <Toggle
+            label="Footprints"
+            onText="Visible"
+            offText="Hidden"
+            checked={showFootprints}
+            onChange={(e, checked) => setShowFootprints(!!checked)}
+          />
+
           {metrics && (
             <div
               style={{
@@ -1327,7 +1410,8 @@ const InteractiveLabeler = () => {
           <div style={{ marginTop: 12, fontSize: 11, color: "#999" }}>
             Click a building to label it · right-click to clear ·{" "}
             <kbd>Ctrl</kbd>+drag to box-label · <kbd>1</kbd>/<kbd>2</kbd>/
-            <kbd>3</kbd> set class · <kbd>P</kbd> toggle view
+            <kbd>3</kbd> set class · <kbd>P</kbd> toggle view ·{" "}
+            <kbd>Space</kbd> show/hide footprints
           </div>
         </div>
       )}
