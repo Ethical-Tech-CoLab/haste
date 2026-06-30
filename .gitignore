@@ -28,3 +28,6 @@ docs/_build
 # Local-only scratchpad; not part of the repo
 LESSONS_LEARNED.md
 HANDOFF.md
+
+# Local-only debug pages + sandbox (not part of the repo)
+debug/

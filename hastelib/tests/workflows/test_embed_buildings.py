@@ -184,5 +184,85 @@ class TestAssembleOutputRowOrder(unittest.TestCase):
         self.assertEqual(out.crs.to_epsg(), 4326)
 
 
+class TestFeaturesSidecar(unittest.TestCase):
+    """The binary sidecar the labeler fetches once at session start."""
+
+    def test_roundtrip(self):
+        import struct
+        import tempfile
+
+        # Three buildings × two features; row-major. Row index is the id.
+        rows = [
+            [1.0, 2.0],
+            [float("nan"), float("nan")],  # invalid slot
+            [5.0, 6.0],
+        ]
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": [0, 1, 2],
+                "overture_id": ["ov_A", "ov_B", "ov_C"],
+                "f_0": [r[0] for r in rows],
+                "f_1": [r[1] for r in rows],
+                "geometry": [box(0, 0, 1, 1) for _ in rows],
+            },
+            crs="EPSG:4326",
+        )
+        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
+            out_path = tmp.name
+        n, d = eb.write_features_sidecar(gdf, out_path)
+        self.assertEqual((n, d), (3, 2))
+
+        with open(out_path, "rb") as f:
+            raw = f.read()
+
+        # Header: magic + version + n + d (16 bytes)
+        self.assertEqual(raw[0:4], eb.SIDECAR_MAGIC)
+        ver, count, dim = struct.unpack("<III", raw[4:16])
+        self.assertEqual(ver, eb.SIDECAR_VERSION)
+        self.assertEqual(count, 3)
+        self.assertEqual(dim, 2)
+        self.assertEqual(len(raw), 16 + count * dim * 4)
+
+        # Row-major f32 lookup by id.
+        floats = np.frombuffer(raw[16:], dtype="<f4").reshape(count, dim)
+        np.testing.assert_array_equal(floats[0], np.array([1.0, 2.0]))
+        np.testing.assert_array_equal(floats[2], np.array([5.0, 6.0]))
+        # The invalid row's NaN sentinel survives the round-trip.
+        self.assertTrue(np.isnan(floats[1, 0]))
+        self.assertTrue(np.isnan(floats[1, 1]))
+
+    def test_rejects_dataframe_with_no_feature_columns(self):
+        gdf = gpd.GeoDataFrame(
+            {"id": [0], "geometry": [box(0, 0, 1, 1)]}, crs="EPSG:4326"
+        )
+        with self.assertRaises(ValueError):
+            eb.write_features_sidecar(gdf, "/tmp/should_not_exist.bin")
+
+    def test_feature_columns_sorted_numerically_not_lexically(self):
+        # f_2 must come before f_10 in the sidecar layout (numeric order),
+        # not after (lexical order). The labeler hard-codes this order.
+        import tempfile
+
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": [0],
+                "f_10": [10.0],
+                "f_2": [2.0],
+                "f_1": [1.0],
+                "geometry": [box(0, 0, 1, 1)],
+            },
+            crs="EPSG:4326",
+        )
+        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
+            out_path = tmp.name
+        n, d = eb.write_features_sidecar(gdf, out_path)
+        self.assertEqual((n, d), (1, 3))
+        with open(out_path, "rb") as f:
+            raw = f.read()
+        floats = np.frombuffer(raw[16:], dtype="<f4")
+        # Expect [f_1, f_2, f_10] in that order.
+        np.testing.assert_array_equal(floats, np.array([1.0, 2.0, 10.0]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -710,7 +710,18 @@ def embed_footprints(
 
 
 def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
-    """Convert a GeoJSON to PMTiles via tippecanoe (inlined to_pmtiles.sh)."""
+    """Convert a GeoJSON to PMTiles via tippecanoe.
+
+    Keeps only the row-index ``id`` and ``overture_id`` attributes on each
+    feature (via ``-y``); the heavy ``f_*`` columns ride in a separate
+    binary sidecar (see :func:`write_features_sidecar`). Without ``-y``
+    every tile would carry several KB of feature vectors per building,
+    blowing up archive size and slowing every pan.
+
+    Lift the per-tile size cap so a dense max-zoom tile carrying every
+    geometry-only feature isn't trimmed; with ``f_*`` no longer in the
+    tiles this is a very cheap "keep all buildings" guarantee.
+    """
     cmd = [
         "tippecanoe",
         "-o",
@@ -723,16 +734,92 @@ def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
         # MapLibre and Azure Maps need this (Azure Maps' VectorTileSource does
         # not honor client-side promoteId).
         "--use-attribute-for-id=id",
-        "--no-tile-size-limit",
+        # Strip every attribute except id + overture_id. The labeler does
+        # not need anything else in the tiles — feature vectors are looked
+        # up from the sidecar by id, and Overture id is needed for the
+        # PutInteractiveLabels round-trip.
+        "-y",
+        "id",
+        "-y",
+        "overture_id",
         "--force",
+        # Cull world-scale levels — buildings are invisible below z=10,
+        # so generating tiles there only adds bytes.
+        "--minimum-zoom=10",
+        # Pin the max zoom to the labeler's working zoom + 1. Tiles at
+        # z>15 are rendered by the SDK via overzoom; the interactive
+        # labeler's queryRenderedFeatures + setFeatureState work unchanged
+        # on overzoomed tiles.
+        "--maximum-zoom=15",
+        # With f_* gone from the tiles even a dense urban tile is small;
+        # we still pass --no-tile-size-limit so the default 500 KB cap
+        # never bites and the build never silently drops a footprint.
+        "--no-tile-size-limit",
+        # Last-resort safety valve.
         "--drop-densest-as-needed",
-        "--limit-tile-feature-count=1500",
-        "--limit-tile-feature-count-at-maximum-zoom=0",
-        "-zg",
         geojson_path,
     ]
     log_progress(f"Running tippecanoe -> {os.path.basename(pmtiles_path)}")
     subprocess.run(cmd, check=True)
+
+
+# Binary sidecar format:
+#   bytes  0-3  : magic "HFTR" (4 ASCII chars)
+#   bytes  4-7  : u32 LE  version (currently 1)
+#   bytes  8-11 : u32 LE  num_buildings (= row count in the embeddings GeoJSON)
+#   bytes 12-15 : u32 LE  feat_dim       (= number of f_* columns)
+#   bytes 16-..              : f32 LE * num_buildings * feat_dim
+#                              (row-major, indexed directly by the row-index id)
+#
+# Row indexing matches the embeddings GeoJSON's "id" column (0..N-1), so the
+# browser looks up a building's feature vector as
+#   features.subarray(id * feat_dim, (id + 1) * feat_dim)
+# Non-finite slots (off-raster buildings with NaN features) are written as
+# NaN — the labeler's isValidVector() filter already rejects them.
+SIDECAR_MAGIC = b"HFTR"
+SIDECAR_VERSION = 1
+
+
+def write_features_sidecar(
+    gdf: gpd.GeoDataFrame, sidecar_path: str
+) -> tuple[int, int]:
+    """Write the per-building f_* vectors to a compact binary sidecar.
+
+    The labeler fetches this file once at session start and looks vectors
+    up by their row-index id — the in-tile attributes are kept down to just
+    id + overture_id (see ``write_pmtiles``), so the PMTiles archive stays
+    small and the labeler still has the data it needs to train + predict.
+
+    Returns ``(num_buildings, feat_dim)``.
+    """
+    feat_cols = [c for c in gdf.columns if c.startswith("f_")]
+    feat_cols.sort(key=lambda c: int(c[2:]))  # f_0, f_1, ..., f_N
+    if not feat_cols:
+        raise ValueError(
+            "GeoDataFrame has no f_* columns to write to sidecar."
+        )
+    n = len(gdf)
+    d = len(feat_cols)
+    # NaN-fill is preserved on the round-trip — invalid feature rows stay
+    # NaN in the sidecar and the labeler's isValidVector filter rejects them.
+    matrix = np.ascontiguousarray(gdf[feat_cols].to_numpy(dtype=np.float32))
+    header = (
+        SIDECAR_MAGIC
+        + np.uint32(SIDECAR_VERSION).tobytes()
+        + np.uint32(n).tobytes()
+        + np.uint32(d).tobytes()
+    )
+    with open(sidecar_path, "wb") as f:
+        f.write(header)
+        # Single contiguous write — pandas already gave us a contiguous f32
+        # block, so this is a straight memcpy from numpy to disk.
+        matrix.tofile(f)
+    log_progress(
+        f"Wrote features sidecar -> {os.path.basename(sidecar_path)} "
+        f"({n} buildings × {d} dims, "
+        f"{(16 + n * d * 4) / (1024 * 1024):.1f} MB)"
+    )
+    return n, d
 
 
 # ---------------------------------------------------------------------------
@@ -776,6 +863,9 @@ def main():
     pmtiles_name = files.get(
         "pmtiles", f"building_pmtiles_{config.get('model_id')}.pmtiles"
     )
+    sidecar_name = files.get(
+        "sidecar", f"building_features_{config.get('model_id')}.bin"
+    )
 
     try:
         if not image_path or not os.path.exists(image_path):
@@ -806,15 +896,21 @@ def main():
         log_progress(f"Writing {len(gdf)} buildings -> {embeddings_path}")
         gdf.to_file(embeddings_path, driver="GeoJSON")
 
+        # Features sidecar — must be written BEFORE the PMTiles step strips
+        # the f_* columns from the tiles, so the in-memory gdf is still
+        # the authoritative source for both.
+        sidecar_path = os.path.join(output_dir, os.path.basename(sidecar_name))
+        num_buildings, feat_dim = write_features_sidecar(gdf, sidecar_path)
+
         pmtiles_path = os.path.join(output_dir, os.path.basename(pmtiles_name))
         write_pmtiles(embeddings_path, pmtiles_path)
 
-        num_features = sum(1 for c in gdf.columns if c.startswith("f_"))
         manifest = {
             "embeddings_filename": os.path.basename(embeddings_path),
             "pmtiles_filename": os.path.basename(pmtiles_path),
-            "num_buildings": int(len(gdf)),
-            "num_features": int(num_features),
+            "sidecar_filename": os.path.basename(sidecar_path),
+            "num_buildings": int(num_buildings),
+            "num_features": int(feat_dim),
         }
         log_progress("Finalizing outputs")
         with open(

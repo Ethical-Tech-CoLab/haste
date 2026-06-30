@@ -454,6 +454,11 @@ class Model(BaseModel):
     embeddingJob: Optional[TrainingJob] = Field(default=None)
     embeddingsGeoJSONUrl: Optional[str] = Field(default=None)
     pmtilesUrl: Optional[str] = Field(default=None)
+    # Binary sidecar (HFTR format) carrying per-building f_* feature
+    # vectors keyed by row-index id. The Interactive Labeler fetches it
+    # once at session start and looks vectors up by id; the PMTiles
+    # archive itself only carries id + overture_id (no f_* columns).
+    featuresSidecarUrl: Optional[str] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("ImageLayer", "imageLayerId")
     )

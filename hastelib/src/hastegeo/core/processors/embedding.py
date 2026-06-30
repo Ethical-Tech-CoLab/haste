@@ -238,6 +238,12 @@ class EmbeddingPostprocessor:
             )
             + ".pmtiles"
         )
+        sidecar_name = (
+            ArtifactTypes.BUILDING_FEATURES_SIDECAR.value.substitute(
+                modelName=self.model_data.modelId
+            )
+            + ".bin"
+        )
 
         embedding_config = {
             "project_id": self.model_data.projectId,
@@ -252,6 +258,7 @@ class EmbeddingPostprocessor:
                 "footprints": footprints_fn,
                 "embeddings": embeddings_name,
                 "pmtiles": pmtiles_name,
+                "sidecar": sidecar_name,
             },
             "pipeline": {
                 "model": self.model_data.embeddingModel or "mosaiks",
@@ -309,6 +316,9 @@ class EmbeddingPostprocessor:
         )
         self.model_data.pmtilesUrl = self._artifact_url(
             manifest.get("pmtiles_filename", "")
+        )
+        self.model_data.featuresSidecarUrl = self._artifact_url(
+            manifest.get("sidecar_filename", "")
         )
         self._update_progress(
             f"Embedded {manifest.get('num_buildings', '?')} buildings "

@@ -168,7 +168,7 @@ export async function createComponentDefaultState(projectId) {
   if (projectId !== undefined) {
     projectToEdit = await apiGet("GetProjectDetails?projectId=" + projectId);
   }
-  const settings = await apiGet("GetAdminSettings");
+  
   var countries = [];
 
   try {

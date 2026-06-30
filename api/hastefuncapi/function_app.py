@@ -3492,17 +3492,14 @@ async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
 def _validation_label_source(model_data: dict, image_layer_id: str) -> dict:
     """Pick the label store for a model's Validation/Assessment report.
 
-    Embedding models (building labeling workflow) keep their interactive-labeler
-    labels in the model-scoped INTERACTIVE_VALIDATION store; standard models use
-    the layer-scoped Building Validation (VALIDATION) store. Returns the
-    metadata ``type`` value and the ``key`` to load.
+    Always the layer-scoped Building Validation (VALIDATION) store. This is
+    the canonical workflow-agnostic place users label, regardless of model
+    type — including the building-labeling workflow's embedding models.
+    (The model-scoped interactive-labeler labels are a per-model workspace
+    that drives the in-browser training pass; they intentionally don't
+    flow back into the Validation/Assessment report metrics.)
     """
     types = config.get_metadata_types()
-    if model_data.get("modelType") == "embedding":
-        return {
-            "type": types.INTERACTIVE_VALIDATION.value,
-            "key": model_data.get("modelId"),
-        }
     return {"type": types.VALIDATION.value, "key": image_layer_id}
 
 
