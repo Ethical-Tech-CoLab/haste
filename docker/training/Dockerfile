@@ -9,7 +9,7 @@ RUN for i in 1 2 3 4 5; do \
 	done \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C /usr/local bin/micromamba \
-	&& conda install -n base -c conda-forge conda-pack --yes \
+	&& micromamba install -p /opt/miniconda -c conda-forge conda-pack -y \
 	&& conda clean -afy
 
 # Copy only env.yml first (maximize build cache)
