@@ -30,12 +30,12 @@ import {
   Toggle,
 } from "@fluentui/react";
 import { PMTiles, Protocol } from "pmtiles";
-import { apiGet, apiPut } from "../../util/api";
+import { apiGet, apiPut, buildUrl } from "../../util/api";
 import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
 } from "../../util/azureMapsAuth";
-import { toBrowserBlobUrl, toBrowserTitilerUrl } from "../../util/blobUrl";
+import { toBrowserTitilerUrl } from "../../util/blobUrl";
 import { AppContext } from "../../AppContext.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 import {
@@ -325,9 +325,19 @@ const InteractiveLabeler = () => {
         "No features sidecar available for this model — re-embed the layer to produce one."
       );
     }
-    // Dev-only host rewrite (azurite -> localhost). No-op in prod.
-    const browserPmtilesUrl = toBrowserBlobUrl(pmtilesUrl);
-    const browserSidecarUrl = toBrowserBlobUrl(sidecarUrl);
+    // Fetch both artifacts through the same-origin API proxy: the
+    // GetModelArtifact route streams the blob server-side via managed
+    // identity and honors Range for pmtiles.js. This keeps the browser
+    // off the firewalled storage account — a direct *.blob SAS URL only
+    // works from allowlisted IPs, so remote/mobile labelers hit a 403.
+    const browserPmtilesUrl = buildUrl(
+      `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
+        `&kind=pmtiles`
+    );
+    const browserSidecarUrl = buildUrl(
+      `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
+        `&kind=sidecar`
+    );
 
     // Read the PMTiles header up front so we can place the camera over the
     // archive's bounds (otherwise the map sits at [0, 0] zoom 3 and the user
