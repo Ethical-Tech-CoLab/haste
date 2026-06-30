@@ -383,11 +383,7 @@ const InteractiveLabeler = () => {
         {
           sourceLayer: PMTILES_SOURCE_LAYER,
           fillColor: fillColorExpr("label"),
-          fillOpacity: [
-            "step", ["zoom"],
-            0.01, // below zoom 15: nearly invisible
-            15, 0.5, // at zoom 15+: normal
-          ],
+          fillOpacity: 0.5,
         }
       );
       map.layers.add(fillLayer);
@@ -397,11 +393,6 @@ const InteractiveLabeler = () => {
           sourceLayer: PMTILES_SOURCE_LAYER,
           strokeColor: "#1a5276",
           strokeWidth: 1,
-          strokeOpacity: [
-            "step", ["zoom"],
-            0.01, // below zoom 15: nearly invisible
-            15, 1, // at zoom 15+: normal
-          ],
         })
       );
 

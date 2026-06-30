@@ -712,13 +712,11 @@ def embed_footprints(
 def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
     """Convert a GeoJSON to PMTiles via tippecanoe.
 
-    Conservative flag set tuned to keep as many buildings as possible at
-    every zoom — the labeler needs to be able to address each footprint
-    individually, so silent drops are worse than larger tiles. All the
-    "drop X" defaults that tippecanoe applies are disabled below;
-    ``--drop-densest-as-needed`` is kept only as a last-resort safety
-    valve if a tile somehow still exceeds tippecanoe's internal hard
-    limits.
+    Final flag set: keep every building at the max zoom by lifting the
+    per-tile size + count caps, allow tippecanoe's default tiny-polygon
+    reduction to apply at intermediate zooms (small footprints simply
+    aren't useful at z<15 anyway), and rely on
+    ``--drop-densest-as-needed`` only as a last-resort safety valve.
     """
     cmd = [
         "tippecanoe",
@@ -749,16 +747,8 @@ def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
         # Last-resort safety valve: drop the densest features if a tile
         # would somehow still exceed tippecanoe's internal hard limits.
         # With --no-tile-size-limit and no feature-count cap this should
-        # essentially never trigger; we keep it so the build doesn't
-        # error out if it ever does.
+        # essentially never trigger.
         "--drop-densest-as-needed",
-        # Suppress the default tiny-polygon reduction at every zoom — small
-        # / narrow footprints (sheds, kiosks, narrow row-houses) would
-        # otherwise be silently dropped even when no count/size cap is in
-        # play. The "-at-maximum-zoom" variant is redundant with the
-        # global flag but the user asked for both; it doesn't hurt.
-        "--no-tiny-polygon-reduction",
-        "--no-tiny-polygon-reduction-at-maximum-zoom",
         geojson_path,
     ]
     log_progress(f"Running tippecanoe -> {os.path.basename(pmtiles_path)}")
