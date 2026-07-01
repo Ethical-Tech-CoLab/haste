@@ -3789,15 +3789,21 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         if not gpkg_url:
             return func.HttpResponse(
                 json.dumps(
-                    {"error": "No inference results available for this model."}
+                    {
+                        "error": (
+                            "No inference results available for this model. "
+                            "Run inference on this model, then generate the "
+                            "validation report."
+                        )
+                    }
                 ),
                 status_code=404,
                 mimetype="application/json",
             )
 
-        # ── 2. Load labels from the right store ────────────────────────────────
-        # Embedding models (building workflow) use the model-scoped interactive
-        # labels; standard models use the layer-scoped Building Validation store.
+        # ── 2. Load labels from the Building Validation store ──────────────────
+        # The report always reads the layer-scoped Building Validation labels,
+        # regardless of model type (see _validation_label_source).
         label_meta = _validation_label_source(model_data, image_layer_id)
         try:
             validation_data = await asyncio.to_thread(
@@ -3809,7 +3815,14 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
             )
         except FileNotFoundError:
             return func.HttpResponse(
-                json.dumps({"error": "No validation labels found."}),
+                json.dumps(
+                    {
+                        "error": (
+                            "No validation labels found. Run Building "
+                            "Validation for this image layer first."
+                        )
+                    }
+                ),
                 status_code=404,
                 mimetype="application/json",
             )
@@ -3817,7 +3830,14 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         labels_dict = validation_data.get("labels") or {}
         if not labels_dict:
             return func.HttpResponse(
-                json.dumps({"error": "No validation labels found."}),
+                json.dumps(
+                    {
+                        "error": (
+                            "No validation labels found. Run Building "
+                            "Validation for this image layer first."
+                        )
+                    }
+                ),
                 status_code=404,
                 mimetype="application/json",
             )
