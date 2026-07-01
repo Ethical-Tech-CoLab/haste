@@ -11,6 +11,7 @@ import ImageLayer from "./ImageLayer";
 import Home from "./Home";
 import LabelingTool from "./LabelingTool/LabelingTool";
 import BuildingValidation from "./BuildingValidation/BuildingValidation";
+import InteractiveLabeler from "./InteractiveLabeler/InteractiveLabeler";
 import Visualizer from "./Visualizer/Visualizer";
 import ModelCatalog from "./ModelCatalog";
 
@@ -63,6 +64,10 @@ const AppBody = ({ setModalComponent }) => {
               <Route
                 path="/validation/:projectId/:imageLayerId"
                 element={<BuildingValidation />}
+              />
+              <Route
+                path="/interactive-label/:projectId/:imageLayerId/:modelId"
+                element={<InteractiveLabeler />}
               />
               <Route
                 path="/visualizer/:projectId/:imageLayerId/:modelId"

@@ -92,6 +92,14 @@ class ArtifactTypes(Enum):
     MODEL_ARTIFACTS_ZIP = Template("artifacts_${modelName}")
     TRAINING_ARTIFACTS_ZIP = Template("training_artifacts_${modelName}")
     INFERENCE_ARTIFACTS_ZIP = Template("inference_artifacts_${modelName}")
+    # Building labeling workflow: per-building MOSAIKS / DINOv2 embeddings
+    # (footprints + f_* feature columns), the matching PMTiles vector tiles
+    # (geometry + id only), the binary HFTR sidecar (id -> feature vector),
+    # and the per-building predictions written by the interactive labeler.
+    BUILDING_EMBEDDINGS = Template("building_embeddings_${modelName}")
+    BUILDING_PMTILES = Template("building_pmtiles_${modelName}")
+    BUILDING_FEATURES_SIDECAR = Template("building_features_${modelName}")
+    BUILDING_PREDICTIONS_GPKG = Template("building_predictions_${modelName}")
 
 
 class InviteConfig(NamedTuple):
@@ -253,6 +261,9 @@ class Config:
             ),
             "stats_queue_name": os.getenv("STATS_QUEUE_NAME", "stats-queue"),
             "zip_queue_name": os.getenv("ZIP_QUEUE_NAME", "zip-queue"),
+            "embedding_queue_name": os.getenv(
+                "EMBEDDING_QUEUE_NAME", "embedding-queue"
+            ),
         }
 
     @staticmethod
@@ -283,10 +294,15 @@ class Config:
             TRAIN_CONFIG = "train_config"
             EXPERIMENT_CONFIG = "experiment_config"
             IMAGERY_CONFIG = "imageryprep_config"
+            EMBEDDING_CONFIG = "embedding_config"
             PROCESSED_IMAGERY = "processed_imagery_post_event_cog"
             RAW_IMAGERY = "raw_imagery"
             PREVIEW_RAW_IMAGERY = "preview_raw_imagery"
             VALIDATION = "validation"
+            # Per-embedding-model labels from the interactive labeler — kept
+            # separate from the layer-scoped Building Validation (VALIDATION)
+            # store so the two workflows don't overwrite each other.
+            INTERACTIVE_VALIDATION = "interactive_validation"
 
         return DataTypes
 

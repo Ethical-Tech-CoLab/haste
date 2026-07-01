@@ -34,6 +34,55 @@ For the triage workflow, ownership, and SLAs that govern when entries land here,
 
 ---
 
+## Root Cause C — GDAL wheel availability gap
+
+**Affects:** Dependabot alerts `#33`, `#34`, `#38` (`hastelib/pyproject.toml`, `api/hastefuncapi/requirements.txt`, `api/hastefuncqueues/requirements.txt`, `docker/imageryprep/requirements.txt`)
+
+HASTE runtime depends on `GDAL==3.9.2` via externally hosted pip wheels in API and imageryprep requirements files. Dependabot advisory metadata points to patched versions in the 3.13 line, but no trusted, prebuilt pip wheel source is currently available for HASTE's Linux runtime constraints.
+
+The current decision is to defer upgrade and apply compensating controls until a trusted upstream wheel source is available or the deployment model is changed.
+
+### Compensating controls (implemented)
+
+These controls are enforced in code — see
+[`spec/features/gdal-compensating-controls/`](../spec/features/gdal-compensating-controls/)
+and [ADR-0003](../spec/architecture/decisions/0003-gdal-driver-allowlist.md).
+
+- **Authenticated, allowlisted providers/endpoints.** User-supplied imagery
+  and footprint URLs are validated against an allowlist
+  (`hastelib/src/hastegeo/core/utils/url_allowlist.py`); `PutLayer` rejects
+  off-allowlist hosts at submission time.
+- **Reject unsupported formats before GDAL parsing (incl. HDF4/EOS).** GDAL/OGR
+  is restricted at process startup to an allowlist of the drivers HASTE
+  actually uses (raster `GTiff, COG, VRT, JPEG, PNG, MEM`; vector
+  `GPKG, GeoJSON, Memory`) by deregistering every other driver
+  (`hastelib/src/hastegeo/core/utils/gdal_security.py::harden_gdal`, wired into
+  every parse site). The HDF4/HDF4Image/HDF5/HDF5Image/netCDF families are
+  additionally refused via `GDAL_SKIP` in the imageryprep and training
+  Dockerfiles, covering subprocess GDAL CLI tools.
+- **Strict size and type checks at upload and download boundaries.** The
+  chunked uploader enforces a cumulative size cap and a magic-byte check that
+  the assembled file matches its declared format before it reaches GDAL
+  (`core/processors/uploader.py`, `gdal_security.sniff_file_type`). The imagery
+  downloader caps download size and (for blob/S3) checks object size first
+  (`core/utils/downloader.py`). Limits are env-tunable
+  (`HASTE_MAX_UPLOAD_BYTES`, `HASTE_MAX_IMAGERY_DOWNLOAD_BYTES`).
+- **SSRF / cross-host redirect guards.** Both the imagery downloader and the
+  user-footprint fetch (`workflows/prepare_imagery.py`) refuse to follow
+  redirects, so an allowlisted source cannot bounce a server-side fetch to an
+  internal host.
+- **Weekly exception review.** Tracked per
+  [triage-process.md](triage-process.md#weekly-dependency-exception-review);
+  closes when a trusted GDAL 3.13+ wheel or a deployment-model change lands.
+
+| Alert # | Package | CVE | Advisory | Dependabot state | Current disposition |
+|---------|---------|-----|----------|------------------|---------------------|
+| `#33` | GDAL | CVE-2026-8088 | GHSA-j3f5-rw74-g4rv | Dismissed (risk tolerable) | Deferred with compensating controls |
+| `#34` | GDAL | CVE-2026-8087 | GHSA-h9rh-5ffh-h669 | Dismissed (risk tolerable) | Deferred with compensating controls |
+| `#38` | GDAL | CVE-2026-8212 | GHSA-r5m4-5vww-w9f5 | Dismissed (risk tolerable) | Deferred with compensating controls |
+
+---
+
 ## Dismissal rationale (for GitHub Dependabot)
 
 When dismissing these alerts on GitHub, use **"Risk tolerable for this project"** with notes along these lines:
@@ -41,3 +90,4 @@ When dismissing these alerts on GitHub, use **"Risk tolerable for this project"*
 - **Alerts #3, #4, #6, #7, #9, #10, #11, #20–29:** Resolved — `azurite` removed from `package.json` and `package-lock.json` regenerated. These alerts should auto-close on next Dependabot rescan; dismiss as fixed if they persist.
 - **Alerts #14, #15, #16:** `inBundle: true` inside `npm@11.13.0` tarball; non-bundled installs already at patched versions. No production exposure.
 - **Alert #32:** `ip-address` `inBundle: true` inside `npm@11.13.0` tarball. XSS in `Address6` HTML-emitting methods; not reachable from application code. Blocked on npm upstream shipping `ip-address@10.1.1` in its bundle.
+- **Alerts `#33`, `#34`, `#38`:** Patched versions require GDAL 3.13 runtime artifacts that are not currently available as trusted pip wheels for this deployment model. Runtime is constrained to externally hosted Linux wheels. Compensating controls are in place or in progress: allowlisted providers/endpoints, pre-parse format filtering, strict size/type checks, and SSRF/redirect guards. Review weekly; close when a trusted wheel source or alternate deployment model is ready.

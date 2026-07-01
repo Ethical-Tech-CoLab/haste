@@ -7,6 +7,7 @@ import binascii
 import json
 import os
 import re
+import tempfile
 import traceback
 
 import azure.functions as func  # type: ignore
@@ -31,13 +32,18 @@ from hastegeo.core.models.training import CatalogModel
 from hastegeo.core.models.users import User
 from hastegeo.core.models.visualizer import Imagery, Visualizer
 from hastegeo.core.processors.artifacts import ArtifactProcessor
+from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
 from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
-from hastegeo.core.utils.blob import download_blob_to_tempfile
+from hastegeo.core.utils.blob import (
+    download_blob_to_tempfile,
+    parse_byte_range,
+    read_blob_range,
+)
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
@@ -1135,6 +1141,120 @@ async def GetLayerModelsDetails(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse("Error loading models.", status_code=500)
 
 
+# Embedding-model artifacts the Interactive Labeler fetches by HTTP byte
+# range, mapped to the Model field that holds each blob URL.
+_MODEL_ARTIFACT_URL_FIELDS = {
+    "pmtiles": "pmtilesUrl",
+    "sidecar": "featuresSidecarUrl",
+    "geojson": "embeddingsGeoJSONUrl",
+}
+_MODEL_ARTIFACT_CONTENT_TYPES = {
+    "pmtiles": "application/octet-stream",
+    "sidecar": "application/octet-stream",
+    "geojson": "application/geo+json",
+}
+
+
+@app.route(
+    route="GetModelArtifact",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
+    """Stream an embedding model's browser artifact via managed identity.
+
+    The Interactive Labeler reads the PMTiles archive (and its features
+    sidecar) by HTTP byte-range straight from the browser. Handing the
+    client a direct ``*.blob.core.windows.net`` SAS URL only works from
+    IPs on the storage firewall allowlist, so remote/mobile/external
+    labelers get a 403. This route keeps the standard HASTE pattern: the
+    browser fetches same-origin ``/api`` and the function app does the
+    blob I/O server-side over the Azure backbone, honoring ``Range`` so
+    pmtiles.js can do partial reads.
+    """
+    try:
+        project_id = _require_guid_param(req, "projectId")
+        model_id = _require_short_int_id_param(req, "modelId")
+    except ValueError as e:
+        return _bad_request(str(e))
+
+    kind = (req.params.get("kind") or "").lower()
+    url_field = _MODEL_ARTIFACT_URL_FIELDS.get(kind)
+    if url_field is None:
+        return _bad_request(
+            f"kind must be one of {sorted(_MODEL_ARTIFACT_URL_FIELDS)}"
+        )
+
+    try:
+        model = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            model_id,
+        )
+    except FileNotFoundError:
+        return func.HttpResponse("Model not found.", status_code=404)
+    except Exception as e:
+        logger.error(
+            f"GetModelArtifact model load failed: {e}\n"
+            f"{traceback.format_exc()}"
+        )
+        return func.HttpResponse("Error loading model.", status_code=500)
+
+    blob_url = (model or {}).get(url_field) or ""
+    if not blob_url:
+        return func.HttpResponse(
+            "Artifact not available for this model.", status_code=404
+        )
+
+    try:
+        offset, length, is_range = parse_byte_range(req.headers.get("Range"))
+    except ValueError:
+        # Unsupported/suffix/multi-range -> serve the whole object.
+        offset, length, is_range = 0, None, False
+
+    try:
+        result = await read_blob_range(blob_url, offset, length)
+    except ValueError as e:
+        logger.error(f"GetModelArtifact bad blob url: {e}")
+        return func.HttpResponse("Artifact unavailable.", status_code=500)
+    except Exception as e:
+        logger.error(
+            f"GetModelArtifact read failed: {e}\n{traceback.format_exc()}"
+        )
+        return func.HttpResponse("Error reading artifact.", status_code=502)
+
+    content_type = _MODEL_ARTIFACT_CONTENT_TYPES.get(kind, result.content_type)
+    headers = {
+        "Content-Type": content_type,
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(len(result.data)),
+        "Cache-Control": "private, max-age=3600",
+    }
+    if result.etag:
+        headers["ETag"] = (
+            result.etag if result.etag.startswith('"') else f'"{result.etag}"'
+        )
+
+    if is_range:
+        if offset >= result.total_size:
+            return func.HttpResponse(
+                "Requested range not satisfiable.",
+                status_code=416,
+                headers={"Content-Range": f"bytes */{result.total_size}"},
+            )
+        end = offset + len(result.data) - 1
+        headers["Content-Range"] = f"bytes {offset}-{end}/{result.total_size}"
+        return func.HttpResponse(
+            body=result.data, status_code=206, headers=headers
+        )
+
+    return func.HttpResponse(
+        body=result.data, status_code=200, headers=headers
+    )
+
+
 @app.route(
     route="PutLabelsFromLabelTool",
     auth_level=AUTH_LEVEL,
@@ -2116,6 +2236,315 @@ async def PutRunInferenceQueueMessage(
         return func.HttpResponse(
             "Invalid JSON in request body.", status_code=400
         )
+
+
+@app.route(
+    route="PutRunEmbeddingQueueMessage",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutRunEmbeddingQueueMessage(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    """Queue a building-embedding job for the building labeling workflow.
+
+    Creates a Model with ``modelType="embedding"`` (the embedding +
+    interactive-labeling sub-row entity) and enqueues it. Unlike training,
+    embedding needs no labels — only the image layer's cached imagery and
+    building footprints (resolved later by the postprocessor).
+    """
+    logger.info(
+        "PutRunEmbeddingQueueMessage HTTP trigger function processed a "
+        "request."
+    )
+    try:
+        req_body = req.get_json()
+        output = Model(**req_body)
+        output.modelType = "embedding"
+
+        if not output.projectId or not output.imageLayerId:
+            return func.HttpResponse(
+                "projectId and imageLayerId are required.", status_code=400
+            )
+
+        if output.modelId is None:
+            output.modelId = MetadataUtils.generate_short_int_id()
+        if output.creationDate is None:
+            output.creationDate = MetadataUtils.get_timestamp()
+        if output.name:
+            output.name = output.name.replace(" ", "-")
+        # Embedding defaults: backbone choice + per-backbone params. MOSAIKS
+        # gets the legacy 1024-feat / 4x-resize defaults; DINOv2 ignores
+        # numFeatures (output dim is fixed per variant) and we keep
+        # resizeFactor at 1 by default since DINOv2 patches are already a
+        # different stride than MOSAIKS blocks.
+        output.embeddingModel = output.embeddingModel or "mosaiks"
+        if output.embeddingModel == "mosaiks":
+            output.resizeFactor = output.resizeFactor or 4
+            output.numFeatures = output.numFeatures or 1024
+        else:
+            output.resizeFactor = output.resizeFactor or 1
+            output.numFeatures = output.numFeatures or 0
+
+        output = await asyncio.to_thread(
+            EmbeddingPreprocessor(output).send_to_queue
+        )
+
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=output.projectId,
+            ).save,
+            output.modelId,
+            output.dict(),
+        )
+
+        request = StatsPreProcessor(
+            request=StatsRequest(
+                action="add",
+                projectId=output.projectId,
+                modelIds=[output.modelId],
+            )
+        ).send_to_queue()
+        logger.info(
+            f"Message sent to update stats for project id "
+            f"{output.projectId} with request {request.dict()}"
+        )
+
+        return func.HttpResponse(json.dumps(output.dict()), status_code=200)
+
+    except ValidationError as e:
+        logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
+        return func.HttpResponse("Validation error.", status_code=400)
+    except ValueError as e:
+        logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
+        return func.HttpResponse(
+            "Invalid JSON in request body.", status_code=400
+        )
+
+
+@app.route(
+    route="GetBuildingEmbeddingsGeoJSON",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetBuildingEmbeddingsGeoJSON(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    """Return the full building-embeddings GeoJSON for the interactive labeler.
+
+    Loads the embedding Model's ``embeddingsGeoJSONUrl`` (footprints + f_*
+    feature columns, one row per footprint in row-index order) and streams it
+    back. Unlike GetBuildingFootprintsGeoJSON this does NOT sample — the
+    in-browser model needs every building's full feature vector.
+
+    Query params: projectId, imageLayerId, modelId.
+    """
+    logger.info(
+        "GetBuildingEmbeddingsGeoJSON HTTP trigger function processed a "
+        "request."
+    )
+    tmp_path = None
+    try:
+        project_id = req.params.get("projectId")
+        model_id = req.params.get("modelId")
+        if not project_id or not model_id:
+            return func.HttpResponse(
+                "projectId and modelId are required.", status_code=400
+            )
+
+        model_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            model_id,
+        )
+
+        embeddings_url = model_data.get("embeddingsGeoJSONUrl")
+        if not embeddings_url:
+            return func.HttpResponse(
+                "No embeddings available for this model.", status_code=404
+            )
+
+        tmp_path = await download_blob_to_tempfile(
+            embeddings_url, suffix=".geojson"
+        )
+        with open(tmp_path, "r") as f:
+            geojson_str = await asyncio.to_thread(f.read)
+
+        return func.HttpResponse(
+            geojson_str,
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except FileNotFoundError:
+        return func.HttpResponse("Model not found.", status_code=404)
+    except Exception as e:
+        logger.error(
+            f"Error in GetBuildingEmbeddingsGeoJSON: {e}\n"
+            f"{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error fetching building embeddings.", status_code=500
+        )
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+@app.route(
+    route="PutBuildingPredictions",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutBuildingPredictions(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    """Persist per-building predictions from the interactive labeler.
+
+    The in-browser model predicts ``damaged`` (0/1) for every building. We
+    join those onto the layer's cached building-footprints GeoPackage by row
+    index, write a predictions GeoPackage with the schema the reports expect
+    (``id`` row index, ``damaged``, ``damage_pct_0m``, ``unknown_pct``,
+    ``area``), upload it, and set the embedding Model's ``gpkgUrl`` so the
+    existing Validation/Assessment reports work unchanged.
+
+    Body: { projectId, imageLayerId, modelId,
+            predictions: [ { id, damaged, unknown? }, ... ] }
+    """
+    logger.info(
+        "PutBuildingPredictions HTTP trigger function processed a request."
+    )
+    tmp_fp = None
+    out_gpkg = None
+    try:
+        import geopandas as gpd
+
+        body = req.get_json()
+        project_id = body.get("projectId")
+        image_layer_id = body.get("imageLayerId")
+        model_id = body.get("modelId")
+        predictions = body.get("predictions") or []
+        if not project_id or not image_layer_id or not model_id:
+            return func.HttpResponse(
+                "projectId, imageLayerId and modelId are required.",
+                status_code=400,
+            )
+
+        image_layer_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        if not footprints_url:
+            return func.HttpResponse(
+                "No building footprints available for this image layer.",
+                status_code=404,
+            )
+
+        model_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            model_id,
+        )
+
+        tmp_fp = await download_blob_to_tempfile(
+            footprints_url, suffix=".gpkg"
+        )
+
+        def _build_predictions_gpkg():
+            gdf = gpd.read_file(tmp_fp).reset_index(drop=True)
+            n = len(gdf)
+            damaged = [0] * n
+            unknown = [0.0] * n
+            for p in predictions:
+                try:
+                    idx = int(p.get("id"))
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= idx < n:
+                    damaged[idx] = 1 if int(p.get("damaged", 0)) == 1 else 0
+                    unknown[idx] = float(p.get("unknown", 0.0))
+            out = gdf[["geometry"]].copy()
+            out.insert(0, "id", range(n))
+            out["damaged"] = damaged
+            out["damage_pct_0m"] = [float(d) for d in damaged]
+            out["unknown_pct"] = unknown
+            # Footprint area in m^2 via an equal-area projection.
+            try:
+                out["area"] = gdf.geometry.to_crs(epsg=6933).area
+            except Exception:
+                out["area"] = None
+            fd, path = tempfile.mkstemp(suffix=".gpkg")
+            os.close(fd)
+            out.to_file(path, layer="predictions", driver="GPKG")
+            return path
+
+        out_gpkg = await asyncio.to_thread(_build_predictions_gpkg)
+
+        artifact_name = (
+            config.get_artifact_types().BUILDING_PREDICTIONS_GPKG.value.substitute(
+                modelName=model_id
+            )
+            + ".gpkg"
+        )
+
+        def _store_and_url():
+            ap = ArtifactProcessor(project_id)
+            ap.store_artifact(artifact_name=artifact_name, src_path=out_gpkg)
+            return ap.get_download_url(identifier=artifact_name)
+
+        gpkg_url = await asyncio.to_thread(_store_and_url)
+
+        model_data["gpkgUrl"] = gpkg_url
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).save,
+            model_id,
+            model_data,
+        )
+
+        return func.HttpResponse(
+            json.dumps({"gpkgUrl": gpkg_url, "count": len(predictions)}),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except FileNotFoundError:
+        return func.HttpResponse("Model not found.", status_code=404)
+    except ValueError as e:
+        logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
+        return func.HttpResponse(
+            "Invalid JSON in request body.", status_code=400
+        )
+    except Exception as e:
+        logger.error(
+            f"Error in PutBuildingPredictions: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error saving building predictions.", status_code=500
+        )
+    finally:
+        for _p in (tmp_fp, out_gpkg):
+            if _p and os.path.exists(_p):
+                try:
+                    os.unlink(_p)
+                except OSError:
+                    pass
 
 
 @app.route(
@@ -3178,6 +3607,123 @@ async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 
+def _validation_label_source(model_data: dict, image_layer_id: str) -> dict:
+    """Pick the label store for a model's Validation/Assessment report.
+
+    Always the layer-scoped Building Validation (VALIDATION) store. This is
+    the canonical workflow-agnostic place users label, regardless of model
+    type — including the building-labeling workflow's embedding models.
+    (The model-scoped interactive-labeler labels are a per-model workspace
+    that drives the in-browser training pass; they intentionally don't
+    flow back into the Validation/Assessment report metrics.)
+    """
+    types = config.get_metadata_types()
+    return {"type": types.VALIDATION.value, "key": image_layer_id}
+
+
+@app.route(
+    route="GetInteractiveLabels",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetInteractiveLabels(req: func.HttpRequest) -> func.HttpResponse:
+    """Return the interactive labeler's labels for an embedding model.
+
+    These live in a separate (model-scoped) store from the layer-scoped
+    Building Validation labels so the two workflows stay independent.
+
+    Query params: projectId, modelId. Returns {"labels": {...}} (empty if none).
+    """
+    logger.info(
+        "GetInteractiveLabels HTTP trigger function processed a request."
+    )
+    try:
+        project_id = req.params.get("projectId")
+        model_id = req.params.get("modelId")
+        if not project_id or not model_id:
+            return func.HttpResponse(
+                "projectId and modelId are required.", status_code=400
+            )
+        try:
+            data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().INTERACTIVE_VALIDATION.value,
+                    partition_key=project_id,
+                ).load,
+                model_id,
+            )
+        except FileNotFoundError:
+            data = {"modelId": model_id, "projectId": project_id, "labels": {}}
+
+        return func.HttpResponse(
+            json.dumps(data), status_code=200, mimetype="application/json"
+        )
+    except Exception as e:
+        logger.error(
+            f"Error in GetInteractiveLabels: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error fetching interactive labels.", status_code=500
+        )
+
+
+@app.route(
+    route="PutInteractiveLabels",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutInteractiveLabels(req: func.HttpRequest) -> func.HttpResponse:
+    """Save the interactive labeler's labels for an embedding model.
+
+    Stored in the INTERACTIVE_VALIDATION store keyed by modelId — separate
+    from the Building Validation (VALIDATION) store keyed by imageLayerId.
+
+    Body: { projectId, imageLayerId, modelId, labels: { <overture-id>: {...} } }
+    """
+    logger.info(
+        "PutInteractiveLabels HTTP trigger function processed a request."
+    )
+    try:
+        body = req.get_json()
+        project_id = body.get("projectId")
+        model_id = body.get("modelId")
+        if not project_id or not model_id:
+            return func.HttpResponse(
+                "projectId and modelId are required.", status_code=400
+            )
+        data = {
+            "modelId": model_id,
+            "imageLayerId": body.get("imageLayerId"),
+            "projectId": project_id,
+            "labels": body.get("labels") or {},
+        }
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().INTERACTIVE_VALIDATION.value,
+                partition_key=project_id,
+            ).save,
+            model_id,
+            data,
+        )
+        return func.HttpResponse(
+            json.dumps(data), status_code=200, mimetype="application/json"
+        )
+    except ValueError as e:
+        logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
+        return func.HttpResponse(
+            "Invalid JSON in request body.", status_code=400
+        )
+    except Exception as e:
+        logger.error(
+            f"Error in PutInteractiveLabels: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error saving interactive labels.", status_code=500
+        )
+
+
 @app.route(
     route="GetValidationReport",
     auth_level=AUTH_LEVEL,
@@ -3230,39 +3776,7 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
             )
 
-        # ── 1. Load validation labels ──────────────────────────────────────────
-        try:
-            validation_data = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().VALIDATION.value,
-                    partition_key=project_id,
-                ).load,
-                image_layer_id,
-            )
-        except FileNotFoundError:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": "No validation labels found for this image layer."
-                    }
-                ),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        labels_dict = validation_data.get("labels") or {}
-        if not labels_dict:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": "No validation labels found for this image layer."
-                    }
-                ),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        # ── 2. Load model to get gpkgUrl ───────────────────────────────────────
+        # ── 1. Load model (modelType picks the label store; gpkgUrl needed) ────
         model_data = await asyncio.to_thread(
             MetadataProcessor(
                 data_type=config.get_metadata_types().MODEL.value,
@@ -3275,7 +3789,54 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         if not gpkg_url:
             return func.HttpResponse(
                 json.dumps(
-                    {"error": "No inference results available for this model."}
+                    {
+                        "error": (
+                            "No inference results available for this model. "
+                            "Run inference on this model, then generate the "
+                            "validation report."
+                        )
+                    }
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # ── 2. Load labels from the Building Validation store ──────────────────
+        # The report always reads the layer-scoped Building Validation labels,
+        # regardless of model type (see _validation_label_source).
+        label_meta = _validation_label_source(model_data, image_layer_id)
+        try:
+            validation_data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=label_meta["type"],
+                    partition_key=project_id,
+                ).load,
+                label_meta["key"],
+            )
+        except FileNotFoundError:
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "error": (
+                            "No validation labels found. Run Building "
+                            "Validation for this image layer first."
+                        )
+                    }
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        labels_dict = validation_data.get("labels") or {}
+        if not labels_dict:
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "error": (
+                            "No validation labels found. Run Building "
+                            "Validation for this image layer first."
+                        )
+                    }
                 ),
                 status_code=404,
                 mimetype="application/json",
@@ -3547,14 +4108,16 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
         # Validation labels are optional for the assessment report — the
         # CLI script can produce the damage-count estimate without labels,
         # and the modal renders that section regardless. The metrics
-        # section is what needs labels.
+        # section is what needs labels. Embedding models read their labels
+        # from the model-scoped interactive-labeler store.
+        label_meta = _validation_label_source(model_data, image_layer_id)
         try:
             validation_data = await asyncio.to_thread(
                 MetadataProcessor(
-                    data_type=config.get_metadata_types().VALIDATION.value,
+                    data_type=label_meta["type"],
                     partition_key=project_id,
                 ).load,
-                image_layer_id,
+                label_meta["key"],
             )
             labels_dict = validation_data.get("labels") or {}
         except FileNotFoundError:

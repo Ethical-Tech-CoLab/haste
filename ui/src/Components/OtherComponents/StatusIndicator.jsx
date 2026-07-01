@@ -9,7 +9,7 @@ import { validateTimestamp } from "../../util/validation";
 import PropTypes from "prop-types";
 import { IconButton } from "@fluentui/react";
 
-const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusMessage, id, prefix = "Status" }) => {
+const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusMessage, id, prefix = "Status", infoMetadata }) => {
   StatusIndicator.propTypes = {
     currentStep: PropTypes.number.isRequired,
     totalSteps: PropTypes.number.isRequired,
@@ -17,6 +17,15 @@ const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusM
     status: PropTypes.string.isRequired,
     statusMessage: PropTypes.string.isRequired,
     id: PropTypes.string,
+    // Optional list of {label, value} run parameters surfaced above the
+    // status-message table in the info modal (e.g. embedding-model row
+    // run params). When omitted the modal only shows the message log.
+    infoMetadata: PropTypes.arrayOf(
+      PropTypes.shape({
+        label: PropTypes.string.isRequired,
+        value: PropTypes.node.isRequired,
+      })
+    ),
   };
   
 
@@ -126,6 +135,7 @@ const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusM
       {isModalVisible && (
         <StatusIndicatorModal
           statusMessages={statusMessageList}
+          infoMetadata={infoMetadata}
           onClose={() => {
             setIsModalVisible(false);
           }}

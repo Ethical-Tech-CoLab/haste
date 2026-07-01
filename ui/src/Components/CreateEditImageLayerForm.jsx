@@ -77,6 +77,7 @@ const CreateEditImageLayerModal = () => {
     const {
       name,
       description,
+      workflowType,
       preEventImageryUrls,
       postEventImageryUrls,
       format,
@@ -198,6 +199,7 @@ const CreateEditImageLayerModal = () => {
           projectId: componentState.projectId,
           name: name,
           description: description,
+          workflowType: workflowType || "standard",
           preEventImageryUrls: getUrlList(preEventImageryUrls),
           postEventImageryUrls: getUrlList(postEventImageryUrls),
           format: format,
@@ -269,6 +271,34 @@ const CreateEditImageLayerModal = () => {
                   )
                 }
                 value={componentState.description}
+              />
+            </div>
+          </div>
+
+          <div className="row mb-2">
+            <div className="col-12">
+              <Dropdown
+                id="createEditImageLayerWorkflowType"
+                label="Workflow type"
+                selectedKey={componentState.workflowType || "standard"}
+                options={[
+                  {
+                    key: "standard",
+                    text: "Standard labeling workflow",
+                  },
+                  {
+                    key: "building",
+                    text: "Building labeling workflow",
+                  },
+                ]}
+                onChange={(e, option) =>
+                  onFormChange(
+                    option.key,
+                    "workflowType",
+                    setComponentState,
+                    componentState
+                  )
+                }
               />
             </div>
           </div>

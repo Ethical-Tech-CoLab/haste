@@ -7,6 +7,7 @@ import { useContext } from "react";
 import { AppContext } from "../../AppContext";
 import PropTypes from "prop-types";
 import ModelResultsButton from "./ModelResultsButton";
+import EmbeddingModelRow from "./EmbeddingModelRow";
 import { limitTextLength } from "../../util/conversion";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ModelCancelButton from "../OtherComponents/ModelCancelButton";
@@ -135,6 +136,18 @@ const ModelRowMobile = ({ models, projectId, imageLayerId, fetchProjectDetails, 
         </tr>
       )}
       {models.map((model, index) => {
+        if (model.modelType === "embedding") {
+          return (
+            <EmbeddingModelRow
+              key={"embedding_" + index}
+              model={model}
+              projectId={projectId}
+              imageLayerId={imageLayerId}
+              index={index}
+              fetchProjectDetails={fetchProjectDetails}
+            />
+          );
+        }
         const trainDate = model.trainDate
           ? `${model.trainDate.substring(0, 10)} ${model.trainDate.substring(11, 19)}`
           : "";
