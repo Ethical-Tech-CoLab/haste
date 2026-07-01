@@ -8,6 +8,7 @@ import { apiDelete, apiPut } from "../../util/api";
 import { AppContext } from "../../AppContext";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ModelResultsButton from "./ModelResultsButton";
+import EmbeddingModelRow from "./EmbeddingModelRow";
 import ModelCancelButton from "../OtherComponents/ModelCancelButton";
 import { limitTextLength } from "../../util/conversion";
 import { fileDownload } from "../../util/file";
@@ -119,6 +120,18 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
   return (
     <>
       {models.map((model, index) => {
+        if (model.modelType === "embedding") {
+          return (
+            <EmbeddingModelRow
+              key={index}
+              model={model}
+              projectId={projectId}
+              imageLayerId={imageLayerId}
+              index={index}
+              fetchProjectDetails={fetchProjectDetails}
+            />
+          );
+        }
         const trainDate = model.trainDate
           ? `${model.trainDate.substring(0, 10)} ${model.trainDate.substring(11, 19)}`
           : "";

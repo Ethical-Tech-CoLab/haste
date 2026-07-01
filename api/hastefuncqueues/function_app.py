@@ -18,6 +18,7 @@ from hastegeo.core.models.projects import (
 from hastegeo.core.models.stats import ProjectsSummary, StatsRequest
 from hastegeo.core.models.training import ExperimentConfig
 from hastegeo.core.processors.artifacts import ArtifactProcessor
+from hastegeo.core.processors.embedding import EmbeddingPostprocessor
 from hastegeo.core.processors.imagery import ImageryPostProcessor
 from hastegeo.core.processors.inference import (
     InferencePostprocessor,
@@ -488,6 +489,104 @@ async def GetCreateModelRunQueueMessage(msg: func.QueueMessage) -> None:
                 f"GetCreateModelRunQueueTrigger: Error sending inference queue message: {inner_e}\n{traceback.format_exc()}",
                 stack_info=True,
             )
+
+
+@app.function_name(name="GetRunEmbeddingQueueTrigger")
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name=config.get_queue_config()["embedding_queue_name"],
+    connection="AzureWebJobsStorage",
+)
+async def GetRunEmbeddingQueueMessage(msg: func.QueueMessage) -> None:
+    """Execute a building-embedding job (building labeling workflow).
+
+    Deserializes the embedding Model, loads its image layer, and drives the
+    EmbeddingPostprocessor state machine (submit -> poll -> finalize). No
+    zip/inference follow-on. Re-enqueues itself while in progress.
+    """
+    logger.info(
+        "GetRunEmbeddingQueueTrigger function processed a message: "
+        f'{msg.get_body().decode("utf-8")}'
+    )
+    model_data = None
+    try:
+        model_data = Model(**json.loads(msg.get_body().decode("utf-8")))
+        try:
+            existing_model = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().MODEL.value,
+                    partition_key=model_data.projectId,
+                ).load,
+                model_data.modelId,
+            )
+        except FileNotFoundError:
+            existing_model = None
+
+        if not existing_model:
+            logger.info(
+                f"Embedding model {model_data.modelId} not found, likely "
+                "deleted, skipping processing."
+            )
+            return
+
+        image_layer = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=model_data.projectId,
+            ).load,
+            model_data.imageLayerId,
+        )
+        image_layer = ImageLayer(**image_layer)
+
+        output = await asyncio.to_thread(
+            EmbeddingPostprocessor(model_data, image_layer).process
+        )
+
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=model_data.projectId,
+            ).save,
+            model_data.modelId,
+            output.dict(),
+        )
+    except ValidationError as e:
+        logger.error(
+            f"GetRunEmbeddingQueueTrigger: Validation error: {e}\n"
+            f"{traceback.format_exc()}"
+        )
+    except ValueError as e:
+        logger.error(
+            f"GetRunEmbeddingQueueTrigger: Invalid JSON: {e}\n"
+            f"{traceback.format_exc()}"
+        )
+    except Exception as e:
+        logger.error(
+            f"GetRunEmbeddingQueueTrigger: Error processing queue message: "
+            f"{e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        if model_data is not None:
+            try:
+                model_data.status = config.get_status_types().FAILED.value
+                model_data.statusMessage = MetadataUtils.append_status_message(
+                    model_data.statusMessage,
+                    f"Embedding job failed: {str(e)}",
+                )
+                await asyncio.to_thread(
+                    MetadataProcessor(
+                        data_type=config.get_metadata_types().MODEL.value,
+                        partition_key=model_data.projectId,
+                    ).save,
+                    model_data.modelId,
+                    model_data.dict(),
+                )
+            except Exception as inner_e:
+                logger.error(
+                    "GetRunEmbeddingQueueTrigger: Error saving failed "
+                    f"status: {inner_e}\n{traceback.format_exc()}",
+                    stack_info=True,
+                )
 
 
 @app.function_name(name="GetRunInferenceQueueTrigger")

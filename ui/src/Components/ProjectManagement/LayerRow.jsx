@@ -10,6 +10,7 @@ import { apiDelete } from "../../util/api";
 import { limitTextLength } from "../../util/conversion";
 import { AppContext } from "../../AppContext";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
+import CreateEditEmbeddingModal from "../CreateEditEmbeddingModal";
 import { useNavigate } from "react-router-dom";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ImageLayerInfoMobile from "./ImageLayerInfoMobile";
@@ -39,6 +40,26 @@ const LayerRow = ({
   };
   const navigate = useNavigate();
   const { setIsLoading, appParams } = useContext(AppContext);
+
+  // Building labeling workflow: layers created with workflowType "building"
+  // get an Embed button (kicks off a MOSAIKS embedding job) instead of the
+  // Label/Train actions. Everything else (imageryprep, Building Validation)
+  // is shared with the standard workflow.
+  const isBuildingWorkflow = item.workflowType === "building";
+  const embeddingModels =
+    (item.models || []).filter((m) => m.modelType === "embedding") || [];
+
+  function handleEmbed() {
+    setModalComponent(
+      <CreateEditEmbeddingModal
+        onClose={() => setModalComponent(null)}
+        projectId={projectId}
+        imageLayer={item}
+        fetchProjectDetails={fetchProjectDetails}
+      />
+    );
+  }
+
   async function handleDeletion() {
     setDialog();
     setIsLoading(true, "Removing Image Layer");
@@ -211,44 +232,78 @@ const LayerRow = ({
           />
         </td>
         <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <DefaultButton
-            id={"singleProjectLabelingToolLaunch" + index}
-            className="dashboard-button"
-            onClick={() =>
-              navigate(`/labeling-tool/${projectId}/${item.imageLayerId}`)
-            }
-            disabled={item.status !== "Processed"}
-          >
-            Launch
-          </DefaultButton>{" "}
-          <Text className="pe-4" variant="small">
-            ({item.labelProjectCount})
-          </Text>
+          {isBuildingWorkflow ? (
+            <>
+              <DefaultButton
+                id={"singleProjectEmbed" + index}
+                className="dashboard-button"
+                onClick={handleEmbed}
+                disabled={
+                  item.status !== "Processed" || !item.buildingFootprintsUrl
+                }
+              >
+                Embed
+              </DefaultButton>{" "}
+              <Text className="pe-4" variant="small">
+                ({embeddingModels.length})
+              </Text>
+            </>
+          ) : (
+            <>
+              <DefaultButton
+                id={"singleProjectLabelingToolLaunch" + index}
+                className="dashboard-button"
+                onClick={() =>
+                  navigate(`/labeling-tool/${projectId}/${item.imageLayerId}`)
+                }
+                disabled={item.status !== "Processed"}
+              >
+                Launch
+              </DefaultButton>{" "}
+              <Text className="pe-4" variant="small">
+                ({item.labelProjectCount})
+              </Text>
+            </>
+          )}
         </td>
         <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <DefaultButton
-            id={"singleProjectModelTraining" + index}
-            className="dashboard-button"
-            onClick={() =>
-              setModalComponent(
-                <CreateEditModelTrainingModal
-                  onClose={() => setModalComponent(null)}
-                  projectId={projectId}
-                  imageLayer={item}
-                  fetchProjectDetails={fetchProjectDetails}
-                  setImageLayerComponentState={setComponentState}
-                  guidedTour="createEditModelTrainingModalGuide"
-                  autoLaunchGuidedTour={true}
-                />
-              )
-            }
-            disabled={item.status !== "Processed" || item.labelProjectCount < 1}
-          >
-            Train
-          </DefaultButton>{" "}
-          <Text className="pe-4" variant="small">
-            ({item.models && item.models.length > 0 ? item.models.length : 0})
-          </Text>
+          {isBuildingWorkflow ? (
+            <Text className="pe-4" variant="small">
+              &mdash;
+            </Text>
+          ) : (
+            <>
+              <DefaultButton
+                id={"singleProjectModelTraining" + index}
+                className="dashboard-button"
+                onClick={() =>
+                  setModalComponent(
+                    <CreateEditModelTrainingModal
+                      onClose={() => setModalComponent(null)}
+                      projectId={projectId}
+                      imageLayer={item}
+                      fetchProjectDetails={fetchProjectDetails}
+                      setImageLayerComponentState={setComponentState}
+                      guidedTour="createEditModelTrainingModalGuide"
+                      autoLaunchGuidedTour={true}
+                    />
+                  )
+                }
+                disabled={
+                  item.status !== "Processed" || item.labelProjectCount < 1
+                }
+              >
+                Train
+              </DefaultButton>{" "}
+              <Text className="pe-4" variant="small">
+                (
+                {item.models && item.models.length > 0
+                  ? item.models.length
+                  : 0}
+                )
+              </Text>
+            </>
+          )}
         </td>
         <td className="custom-text-no-wrap d-none d-xl-table-cell">
           <DefaultButton
