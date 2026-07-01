@@ -63,6 +63,44 @@ if (typeof window !== "undefined" && window.atlas) {
 // VectorTileSource references this layer name to draw the polygons.
 const PMTILES_SOURCE_LAYER = "buildings";
 
+// pmtiles.js reads an archive through a `Source` (getKey + getBytes). Its
+// default FetchSource issues HTTP Range requests, but the Interactive
+// Labeler is served behind an Azure Static Web App whose /api proxy does
+// NOT honor byte serving: a ranged GET comes back as a full 200, so
+// pmtiles throws "Server returned no content-length header or content-length
+// exceeding request." We sidestep that by downloading the whole archive once
+// (a plain full GET, which the SWA proxy handles fine — same as the HFTR
+// sidecar) and satisfying every range read from that in-memory buffer.
+// `getKey()` must equal the string used in the `pmtiles://<key>` source URL
+// so Protocol.add()'s lookup matches.
+class InMemoryPMTilesSource {
+  constructor(key, arrayBuffer) {
+    this._key = key;
+    this._buf = arrayBuffer;
+  }
+  getKey() {
+    return this._key;
+  }
+  async getBytes(offset, length) {
+    // ArrayBuffer.slice clamps to the buffer end, which is what pmtiles
+    // expects for the initial 16 KB header read on a smaller archive.
+    return { data: this._buf.slice(offset, offset + length) };
+  }
+}
+
+// Download an entire artifact through the same-origin API proxy as raw
+// bytes. Used for the PMTiles archive so it can be read fully in memory
+// (see InMemoryPMTilesSource) rather than via unsupported range requests.
+async function fetchArtifactBuffer(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(
+      `Failed to fetch PMTiles archive (HTTP ${resp.status}) at ${url}`
+    );
+  }
+  return resp.arrayBuffer();
+}
+
 // Class colors (match index.html). Index = class number.
 const CLASS_COLORS = ["#107C10", "#C50F1F", "#5B5FC7"]; // intact, damaged, cloudy
 const UNLABELED_COLOR = "#BDBDBD";
@@ -327,9 +365,9 @@ const InteractiveLabeler = () => {
     }
     // Fetch both artifacts through the same-origin API proxy: the
     // GetModelArtifact route streams the blob server-side via managed
-    // identity and honors Range for pmtiles.js. This keeps the browser
-    // off the firewalled storage account — a direct *.blob SAS URL only
-    // works from allowlisted IPs, so remote/mobile labelers hit a 403.
+    // identity. This keeps the browser off the firewalled storage account —
+    // a direct *.blob SAS URL only works from allowlisted IPs, so
+    // remote/mobile labelers hit a 403.
     const browserPmtilesUrl = buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
         `&kind=pmtiles`
@@ -339,18 +377,26 @@ const InteractiveLabeler = () => {
         `&kind=sidecar`
     );
 
-    // Read the PMTiles header up front so we can place the camera over the
-    // archive's bounds (otherwise the map sits at [0, 0] zoom 3 and the user
-    // sees no tiles). One ~16 KB byte-range read, cached by pmtiles' shared
-    // promise cache so the source's later reads reuse it.
+    // Download the whole archive once and serve pmtiles.js from memory. The
+    // SWA /api proxy in front of the function app does not support HTTP range
+    // requests (a ranged GET returns a full 200), so a network-backed
+    // FetchSource fails with a byte-serving error. Reading the archive fully
+    // and handing pmtiles an in-memory source makes every subsequent range
+    // read hit the local buffer instead of the network. `getKey()` returns
+    // browserPmtilesUrl so it matches the `pmtiles://<url>` source below.
     let pmtilesHeader = null;
     try {
-      const pm = new PMTiles(browserPmtilesUrl);
+      const pmtilesBuffer = await fetchArtifactBuffer(browserPmtilesUrl);
+      const pm = new PMTiles(
+        new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
+      );
       // Pre-register so the protocol can serve tile reads from the same handle.
       _pmtilesProtocol.add(pm);
+      // Read the header so we can place the camera over the archive's bounds
+      // (otherwise the map sits at [0, 0] zoom 3 and the user sees no tiles).
       pmtilesHeader = await pm.getHeader();
     } catch (e) {
-      console.warn("Failed to read PMTiles header (continuing):", e);
+      console.warn("Failed to load PMTiles archive (continuing):", e);
     }
 
     // Fetch the binary features sidecar and parse the HFTR header. The
