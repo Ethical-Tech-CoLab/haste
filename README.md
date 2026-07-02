@@ -39,10 +39,12 @@ docker compose -f docker/docker-compose.yml up
 
 Full documentation is published at **[https://microsoft.github.io/haste](https://microsoft.github.io/haste)** and covers:
 
-- [Getting Started](https://microsoft.github.io/haste/getting-started.html)
+- [User Guide](https://microsoft.github.io/haste/usage/overview.html) — how to use the application end to end
+- [Local Development](https://microsoft.github.io/haste/setup/local-dev.html)
+- [Deployment Guide](https://microsoft.github.io/haste/deployment.html)
+- [Configuration Guide](https://microsoft.github.io/haste/configuration.html)
 - [Architecture](https://microsoft.github.io/haste/architecture.html)
 - [API Reference](https://microsoft.github.io/haste/api/modules.html)
-- [Deployment Guide](https://microsoft.github.io/haste/deployment.html)
 - [Secure Configuration Guidance](https://microsoft.github.io/haste/security-configuration.html)
 
 Source for the docs lives in [`docs/`](docs/) and is built with [Jupyter Book](https://jupyterbook.org/).

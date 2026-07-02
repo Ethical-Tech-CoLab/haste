@@ -27,23 +27,13 @@ HASTE is an AI-powered disaster assessment framework that leverages satellite im
 | **Tile Server** (`titilerfuncapi`) | TiTiler + FastAPI | Cloud Optimized GeoTIFF tile serving |
 | **Core Library** (`haste`) | Python package | Shared models, processors, data layers, and utilities |
 
-## Quick Start
+## Where to start
 
-```bash
-# Clone the repository
-git clone https://github.com/microsoft/haste.git
-cd haste
-
-# Set up the environment
-conda env create -f env.yml
-conda activate haste_env
-
-# Start the API services
-cd api/hastefuncapi
-func host start
-
-# Start the UI (in another terminal)
-cd ui
-npm install
-npm run dev
-```
+- **New to HASTE?** Start with the {doc}`User Guide <usage/overview>` to see how the
+  application works end to end — creating projects, adding imagery, labeling, training a
+  model, and viewing results.
+- **Want to run it locally?** Follow {doc}`Local Development <setup/local-dev>` to bring up
+  the full stack with Docker Compose.
+- **Deploying to Azure?** See the {doc}`Deployment Guide <deployment>` for the one-step
+  `azd up` deployment, and the {doc}`Configuration Guide <configuration>` for the full
+  settings matrix.

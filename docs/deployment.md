@@ -6,9 +6,9 @@ This guide covers deploying HASTE to various environments.
 
 HASTE is provisioned and deployed with the
 [Azure Developer CLI (`azd`)](https://learn.microsoft.com/azure/developer/azure-developer-cli/),
-which applies the Bicep in [`infra/`](../infra) and deploys the three Function
+which applies the Bicep in [`infra/`](https://github.com/microsoft/haste/tree/main/infra) and deploys the three Function
 Apps and the Static Web App in one command. See
-[`setup/README.md`](../setup/README.md) for the full quickstart and
+[`setup/README.md`](https://github.com/microsoft/haste/blob/main/setup/README.md) for the full quickstart and
 [`configuration.md`](configuration.md) for the configuration matrix.
 
 ### Prerequisites
@@ -61,51 +61,8 @@ live environment without applying anything.
 
 ## Local Development
 
-### Docker Compose
-
-Use Docker Compose for local development:
-
-```bash
-cd docker
-docker-compose up -d
-```
-
-The `docker/docker-compose.yml` defines the following services:
-
-| Service | Base Image | Port | Description |
-|---------|-----------|------|-------------|
-| `training` | Azure ML GPU (CUDA 11.8) | — | Model training with GPU support (20GB shared memory) |
-| `api` | Azure Functions Python 3.11 | 7071 | REST API (commented out by default) |
-| `ui` | Node.js 20 | 5000 | Production UI build (commented out by default) |
-| `emulators` | Azurite | 10000-10002 | Azure Storage emulator (commented out by default) |
-
-Uncomment the services you need in `docker-compose.yml`. The training service mounts `../data/training` for data access.
-
-### Manual Setup
-
-For manual local setup:
-
-1. **Start API services**:
-
-   ```bash
-   cd api/hastefuncapi
-   func host start
-   ```
-
-2. **Start queue processing**:
-
-   ```bash
-   cd api/hastefuncqueues
-   func host start
-   ```
-
-3. **Start UI**:
-
-   ```bash
-   cd ui
-   npm install
-   npm run dev
-   ```
+For running HASTE locally, see the [Local Development](setup/local-dev.md) guide, which
+brings up the full stack with Docker Compose.
 
 ## Production Considerations
 
