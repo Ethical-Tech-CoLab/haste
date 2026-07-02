@@ -223,7 +223,7 @@ hatch build -t wheel
 
 The `hatch build` command automatically:
 - Increments the version in `hastelib/src/hastegeo/__about__.py`
-- Builds a wheel, uploads it to the `haste-binaries` blob container, and removes the local copy from `hastelib/dist/`
+- Builds a wheel, uploads it as an asset on the [`haste-binaries` GitHub release](https://github.com/microsoft/haste/releases/tag/haste-binaries) (needs the `gh` CLI and `gh auth login`), and removes the local copy from `hastelib/dist/`
 - Rewrites the pinned wheel URL on the `hastegeo @ <url>` line of `api/hastefuncapi/requirements.txt`, `api/hastefuncqueues/requirements.txt`, and `docker/imageryprep/requirements.txt`
 
 Then deploy the function apps:

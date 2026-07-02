@@ -2,12 +2,20 @@
 # Licensed under the MIT License.
 import os
 import re
+import shutil
+import subprocess
 
-from azure.storage.blob import BlobServiceClient
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
-ACCOUNT_URL = "https://researchlabwuopendata.blob.core.windows.net"
-CONTAINER_NAME = "haste-binaries"
+# GitHub Release that hosts the pip-installable HASTE binaries (the GDAL
+# manylinux wheel plus every published ``hastegeo`` wheel). Once the repo is
+# public these assets are anonymously downloadable, e.g.:
+#   https://github.com/microsoft/haste/releases/download/haste-binaries/
+GITHUB_REPO = "microsoft/haste"
+RELEASE_TAG = "haste-binaries"
+RELEASE_DOWNLOAD_BASE = (
+    f"https://github.com/{GITHUB_REPO}/releases/download/{RELEASE_TAG}"
+)
 # Matches the version in a wheel filename, e.g. "hastegeo-1.0.19-py3-none-any.whl"
 WHEEL_VERSION_RE = re.compile(r"^hastegeo-(\d+)\.(\d+)\.(\d+)")
 
@@ -37,64 +45,73 @@ class CustomBuildHook(BuildHookInterface):
         """Return the license of the plugin."""
         return "MIT"
 
-    def _get_container_client(self):
-        """Return an authenticated client for the haste-binaries container."""
-        from azure.identity import AzureCliCredential
-
-        # Use AzureCliCredential specifically to match Azure CLI behavior
-        credential = AzureCliCredential()
-        blob_service_client = BlobServiceClient(
-            account_url=ACCOUNT_URL, credential=credential
+    def _run_gh(self, args, check=True):
+        """Run a ``gh`` CLI command against the HASTE repo and return the
+        CompletedProcess. Raises FileNotFoundError if gh is not installed."""
+        if shutil.which("gh") is None:
+            raise FileNotFoundError(
+                "The GitHub CLI ('gh') is required to publish wheels. "
+                "Install it and run 'gh auth login'."
+            )
+        return subprocess.run(
+            ["gh", *args, "--repo", GITHUB_REPO],
+            capture_output=True,
+            text=True,
+            check=check,
         )
-        return blob_service_client.get_container_client(CONTAINER_NAME)
 
     def get_latest_published_version(self):
-        """Return the highest (major, minor, patch) tuple already published to
-        blob storage, or None if nothing is found or the listing fails."""
+        """Return the highest (major, minor, patch) tuple already published as
+        an asset on the GitHub release, or None if nothing is found or the
+        listing fails."""
         try:
-            container_client = self._get_container_client()
+            result = self._run_gh(
+                [
+                    "release",
+                    "view",
+                    RELEASE_TAG,
+                    "--json",
+                    "assets",
+                    "--jq",
+                    ".assets[].name",
+                ]
+            )
             versions = []
-            for blob in container_client.list_blobs(
-                name_starts_with="hastegeo-"
-            ):
-                match = WHEEL_VERSION_RE.match(blob.name)
+            for name in result.stdout.splitlines():
+                match = WHEEL_VERSION_RE.match(name.strip())
                 if match:
                     versions.append(tuple(int(x) for x in match.groups()))
 
             if not versions:
-                print("No published hastegeo wheels found in blob storage.")
+                print("No published hastegeo wheels found in the release.")
                 return None
 
             latest = max(versions)
             print(
-                "Latest published version in blob storage: "
+                "Latest published version in the GitHub release: "
                 f"{'.'.join(map(str, latest))}"
             )
             return latest
         except Exception as e:
-            print(f"Could not list blob storage versions: {e}")
+            print(f"Could not list GitHub release versions: {e}")
             return None
 
-    def upload_to_blob_storage(self, file_path: str, blob_name: str) -> str:
-        """Upload file to Azure blob storage and return the URL."""
+    def upload_to_github_release(self, file_path: str, asset_name: str) -> str:
+        """Upload a wheel as an asset on the haste-binaries GitHub release and
+        return its anonymous download URL (or None on failure)."""
         try:
-            container_client = self._get_container_client()
-            blob_client = container_client.get_blob_client(blob_name)
-
-            # Upload file
-            with open(file_path, "rb") as data:
-                blob_client.upload_blob(data, overwrite=True)
-
-            # Return the public URL
-            blob_url = f"{ACCOUNT_URL}/{CONTAINER_NAME}/{blob_name}"
-            print(
-                f"Successfully uploaded {blob_name} to blob storage: {blob_url}"
+            self._run_gh(
+                ["release", "upload", RELEASE_TAG, file_path, "--clobber"]
             )
-            return blob_url
+            asset_url = f"{RELEASE_DOWNLOAD_BASE}/{asset_name}"
+            print(
+                f"Successfully uploaded {asset_name} to the GitHub release: "
+                f"{asset_url}"
+            )
+            return asset_url
 
         except Exception as e:
-            print(f"Failed to upload to blob storage: {e}")
-            print("Falling back to local file copy...")
+            print(f"Failed to upload to GitHub release: {e}")
             return None
 
     def _write_version_file(self, version_str: str) -> None:
@@ -134,8 +151,8 @@ class CustomBuildHook(BuildHookInterface):
             return
 
         # Base the next version on the highest version already published to
-        # blob storage so we never overwrite an existing wheel. Fall back to
-        # the local __about__.py version if the listing is unavailable.
+        # the GitHub release so we never overwrite an existing wheel. Fall
+        # back to the local __about__.py version if the listing is unavailable.
         base = self.get_latest_published_version()
         if base is None:
             base = tuple(map(int, self.metadata.version.split(".")))
@@ -196,16 +213,17 @@ class CustomBuildHook(BuildHookInterface):
 
         wheel_path = os.path.join(build_dir, wheel_file)
 
-        # Try to upload to blob storage first
-        blob_url = self.upload_to_blob_storage(wheel_path, wheel_file)
+        # Upload the freshly built wheel as an asset on the GitHub release.
+        asset_url = self.upload_to_github_release(wheel_path, wheel_file)
 
         # Update the associated requirements.txt files to use the new version.
         # If upload fails, keep existing references unchanged to avoid invalid paths.
-        wheel_reference = f"hastegeo @ {blob_url}" if blob_url else None
+        wheel_reference = f"hastegeo @ {asset_url}" if asset_url else None
 
         if wheel_reference is None:
             print(
-                "Blob upload failed; skipping requirements.txt haste reference updates."
+                "GitHub upload failed; skipping requirements.txt haste "
+                "reference updates."
             )
             return
 
@@ -228,7 +246,7 @@ class CustomBuildHook(BuildHookInterface):
                     if line.strip().startswith("haste") and (
                         "@" in line or "haste-" in line
                     ):
-                        # Replace existing haste reference with new blob URL
+                        # Replace existing haste reference with release URL
                         file.write(f"{wheel_reference}\n")
                         print(
                             f"Updated haste reference in {requirements_file}"
@@ -236,7 +254,7 @@ class CustomBuildHook(BuildHookInterface):
                     else:
                         file.write(line)
 
-        # Update env.yml to also use blob URL for consistency
+        # Update env.yml to also use the release URL for consistency
         env_yml_path = "../env.yml"
         if os.path.exists(env_yml_path):
             with open(env_yml_path, "r") as file:
@@ -247,7 +265,7 @@ class CustomBuildHook(BuildHookInterface):
                     if "haste" in line and (
                         "@" in line or "haste-" in line and ".whl" in line
                     ):
-                        # Use blob URL for env.yml as well for consistency
+                        # Use release URL for env.yml as well for consistency
                         yaml_line = f"    - {wheel_reference}\n"
                         file.write(yaml_line)
                         print(f"Updated haste reference in {env_yml_path}")

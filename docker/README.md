@@ -649,7 +649,7 @@ python -m build --wheel
 The custom `haste_build.py` script:
 1. Increments the version in `src/hastegeo/__about__.py`
 2. Builds a `.whl` file under `hastelib/dist/`
-3. Uploads it to `researchlabwuopendata.blob.core.windows.net/haste-binaries/` (requires `az login`) and removes the local copy from `hastelib/dist/`
+3. Uploads it as an asset on the `haste-binaries` GitHub release (`github.com/microsoft/haste/releases/tag/haste-binaries`, requires the `gh` CLI and `gh auth login`) and removes the local copy from `hastelib/dist/`
 4. Rewrites the `hastegeo @ <url>` line in `api/hastefuncapi/requirements.txt`, `api/hastefuncqueues/requirements.txt`, and `docker/imageryprep/requirements.txt` so they pin the new wheel URL
 
 > **For local Docker**, you do NOT need to rebuild the wheel — the Dockerfiles
