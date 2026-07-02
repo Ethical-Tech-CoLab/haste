@@ -4,59 +4,60 @@ This guide covers deploying HASTE to various environments.
 
 ## Azure Deployment
 
+HASTE is provisioned and deployed with the
+[Azure Developer CLI (`azd`)](https://learn.microsoft.com/azure/developer/azure-developer-cli/),
+which applies the Bicep in [`infra/`](../infra) and deploys the three Function
+Apps and the Static Web App in one command. See
+[`setup/README.md`](../setup/README.md) for the full quickstart and
+[`configuration.md`](configuration.md) for the configuration matrix.
+
 ### Prerequisites
 
-- Azure subscription
-- Azure CLI installed and configured
-- Docker (for containerized deployments)
+- An Azure subscription and rights to create resources in it.
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) (`az`) and
+  [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) (`azd`).
+- [PowerShell 7+](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`) — the deploy hooks are cross-platform PowerShell.
+- [Node.js](https://nodejs.org/) and the [Static Web Apps CLI](https://azure.github.io/static-web-apps-cli/) (`swa`), plus Python 3.11.
 
-### Function Apps
-
-The API is deployed as Azure Function Apps:
-
-```bash
-# Create resource group
-az group create --name haste-rg --location eastus
-
-# Create function app
-az functionapp create \
-  --resource-group haste-rg \
-  --consumption-plan-location eastus \
-  --runtime python \
-  --runtime-version 3.11 \
-  --functions-version 4 \
-  --name haste-api \
-  --storage-account hastestorage
-```
-
-### Environment Variables
-
-Configure the following environment variables:
+### Provision and deploy
 
 ```bash
-az functionapp config appsettings set \
-  --name haste-api \
-  --resource-group haste-rg \
-  --settings \
-    AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=..." \
-    AZURE_COSMOSDB_CONNECTION_STRING="AccountEndpoint=..." \
-    IMAGERY_API_KEY="your-api-key"  # pragma: allowlist secret
+azd auth login
+az login
+
+# Create an environment and set the required configuration.
+azd env new dev3
+azd env set HASTE_RESOURCE_PREFIX      ai4gl
+azd env set HASTE_RANDOM_SUFFIX        dev3
+azd env set AZURE_LOCATION             westus2
+azd env set HASTE_APIM_PUBLISHER_EMAIL you@example.com
+
+# Provision infrastructure and deploy the apps.
+azd up
 ```
 
-### Static Web App (UI)
+`azd up` provisions all resources, deploys the `api`, `titiler`, and `queues`
+Function Apps, then runs the postdeploy hook: it publishes the UI to the Static
+Web App, syncs APIM operations and injects the Function host key, seeds default
+admin settings and the first admin user, and invites the first admin.
 
-Deploy the React UI as an Azure Static Web App:
+### Configuration
+
+All settings are supplied with `azd env set <NAME> <value>` before `azd up` — no
+in-place `<REPLACE_ME>` edits and no manually pasted connection strings (the
+email backend is provisioned in-IaC). The full matrix, including Batch
+create-vs-bring-your-own, the email sender domain, the Front Door flag,
+development mode, and the first-admin seed, is documented in the
+[configuration guide](configuration.md).
+
+### Preview changes (what-if)
 
 ```bash
-# Create static web app
-az staticwebapp create \
-  --name haste-ui \
-  --resource-group haste-rg \
-  --source https://github.com/microsoft/haste \
-  --branch main \
-  --app-location "/ui" \
-  --api-location "/api"
+azd provision --preview
 ```
+
+This runs `az deployment sub what-if` and reports what would change against the
+live environment without applying anything.
 
 ## Local Development
 
