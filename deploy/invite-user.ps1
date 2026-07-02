@@ -1,17 +1,19 @@
 #!/usr/bin/env pwsh
-# Invite the deploying user to the Static Web App as administrator+contributor so
-# they can sign in immediately after `azd up`. Port of
-# setup/setup_infra.sh:create_user_invitation. Idempotent: skips if the user is
-# already a SWA user. Prints the invitation URL (SWA invitations can't be emailed
-# automatically without the wider invitation flow).
+# Invite the first admin to the Static Web App as administrator+contributor so
+# they can sign in immediately after `azd up`. The invitee is
+# HASTE_FIRST_ADMIN_EMAIL when set (non-interactive / CI deploys), else the
+# signed-in deployer. Idempotent: skips if the user is already a SWA user. Prints
+# the invitation URL (SWA invitations can't be emailed automatically without the
+# wider invitation flow).
 #
 # Inputs (azd environment): STATIC_WEB_APP_NAME, AZURE_RESOURCE_GROUP,
-# AZURE_SUBSCRIPTION_ID.
+# AZURE_SUBSCRIPTION_ID, HASTE_FIRST_ADMIN_EMAIL (optional).
 
 param(
     [string]$StaticWebApp = $env:STATIC_WEB_APP_NAME,
     [string]$ResourceGroup = $env:AZURE_RESOURCE_GROUP,
     [string]$SubscriptionId = $env:AZURE_SUBSCRIPTION_ID,
+    [string]$FirstAdminEmail = $env:HASTE_FIRST_ADMIN_EMAIL,
     [int]$HoursToExpiration = 168
 )
 
@@ -22,9 +24,12 @@ if ([string]::IsNullOrWhiteSpace($StaticWebApp)) {
     return
 }
 
-$email = az ad signed-in-user show --query mail -o tsv 2>$null
+$email = $FirstAdminEmail
 if ([string]::IsNullOrWhiteSpace($email)) {
-    Write-Warning "invite-user: could not resolve the signed-in user's email (service principal / no mail attribute?). Skipping self-invite."
+    $email = az ad signed-in-user show --query mail -o tsv 2>$null
+}
+if ([string]::IsNullOrWhiteSpace($email)) {
+    Write-Warning "invite-user: no HASTE_FIRST_ADMIN_EMAIL and could not resolve the signed-in user's email (service principal / no mail attribute?). Skipping invite. Set HASTE_FIRST_ADMIN_EMAIL for non-interactive deploys."
     return
 }
 

@@ -2,7 +2,7 @@
 # azd postdeploy: seed the app's default storage documents, once each. Two blobs
 # in the `data` container:
 #   1. config_admin_settings.json — default admin settings (source types, base
-#      models, labeling settings). Port of setup_infra.sh:upload_admin_settings.
+#      models, labeling settings).
 #   2. users_acl.json — the first admin user, so the deployer can actually sign in.
 #      A fresh env has no users_acl.json; GetUserById then throws FileNotFoundError
 #      (before the DEVELOPMENT_MODE auto-create can run) and the UI renders blank.
@@ -12,12 +12,15 @@
 # ACCOUNT KEY over a briefly-opened firewall — not `--auth-mode login`, which fails
 # silently. Both uploads are skip-if-exists so live data is never clobbered.
 #
-# Inputs (azd environment): STORAGE_ACCOUNT_NAME, AZURE_RESOURCE_GROUP.
+# Inputs (azd environment): STORAGE_ACCOUNT_NAME, AZURE_RESOURCE_GROUP,
+# HASTE_FIRST_ADMIN_EMAIL (optional — designates the first admin for
+# non-interactive / CI deploys; otherwise the signed-in deployer is used).
 
 param(
     [string]$StorageAccount = $env:STORAGE_ACCOUNT_NAME,
     [string]$ResourceGroup = $env:AZURE_RESOURCE_GROUP,
-    [string]$Container = 'data'
+    [string]$Container = 'data',
+    [string]$FirstAdminEmail = $env:HASTE_FIRST_ADMIN_EMAIL
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,10 +51,14 @@ function Seed-Blob([string]$BlobName, [string]$LocalFile) {
     else { Write-Warning "seed-storage: failed to upload '$BlobName'." }
 }
 
-# Build the first-admin user record from the signed-in deployer (skipped for
-# non-interactive / service-principal deploys, which have no user identity).
+# Build the first-admin user record. Prefer the explicit HASTE_FIRST_ADMIN_EMAIL
+# (required for non-interactive / service-principal / CI deploys, which have no
+# signed-in user identity), else fall back to the signed-in deployer.
 $adminFile = $null
-$email = az ad signed-in-user show --query mail -o tsv 2>$null
+$email = $FirstAdminEmail
+if ([string]::IsNullOrWhiteSpace($email)) {
+    $email = az ad signed-in-user show --query mail -o tsv 2>$null
+}
 if (-not [string]::IsNullOrWhiteSpace($email)) {
     $adminUser = @(
         [ordered]@{
@@ -69,7 +76,7 @@ if (-not [string]::IsNullOrWhiteSpace($email)) {
     $adminFile = New-TemporaryFile
     [System.IO.File]::WriteAllText($adminFile.FullName, ($adminUser | ConvertTo-Json -Depth 6 -AsArray))
 } else {
-    Write-Warning "seed-storage: no signed-in user email; skipping first-admin seed (users_acl.json)."
+    Write-Warning "seed-storage: no HASTE_FIRST_ADMIN_EMAIL and no signed-in user email; skipping first-admin seed (users_acl.json). Set HASTE_FIRST_ADMIN_EMAIL for non-interactive deploys."
 }
 
 $originalAction = az storage account show --name $StorageAccount --resource-group $ResourceGroup `
