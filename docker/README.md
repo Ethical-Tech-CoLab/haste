@@ -7,6 +7,10 @@
 > This guide walks you through **every step** required to run the full HASTE stack locally
 > with Docker Compose — from provisioning a VM to verifying that training and inference
 > jobs complete successfully.
+>
+> **Automating setup with an AI agent?** See [`../QUICKSTART.md`](../QUICKSTART.md) — a
+> condensed, decision-driven runbook for Claude Code / GitHub Copilot with explicit verify
+> gates. This file remains the comprehensive human reference.
 
 ---
 
