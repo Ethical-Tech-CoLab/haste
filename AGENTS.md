@@ -152,6 +152,8 @@ treat new-endpoint PRs as needing an out-of-band ops handoff.
 
 ## See also
 
+- `QUICKSTART.md` — agent runbook to stand up the local stack (phased,
+  verify-gated; for Claude Code / Copilot driving setup end-to-end).
 - `README.md` — getting-started for the dev stack.
 - `docker/README.md` — service-by-service docker compose architecture.
 - `docs/development.md` — broader contributor guide.
