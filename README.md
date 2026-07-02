@@ -21,7 +21,7 @@ The fastest way to run HASTE locally is with Docker Compose, which starts the fu
 ```bash
 git clone https://github.com/microsoft/haste.git
 cd haste
-docker-compose -f docker/docker-compose.yml up
+docker compose -f docker/docker-compose.yml up
 ```
 
 | Service | URL |
