@@ -107,7 +107,7 @@ invitation to run as azd hooks,
 
 **Priority:** P1
 **Estimate:** M
-**Component(s):** `infra/hooks/`
+**Component(s):** `deploy/`
 
 **Acceptance Criteria:**
 

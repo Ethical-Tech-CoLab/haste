@@ -53,7 +53,7 @@ infra/
     batch.bicep                # batch account (create) OR existing ref + pool (autoscale, container, vnet)
     frontend.bicep             # Static Web App + Azure Maps
     frontdoor.bicep            # Front Door profile + WAF policy (deployed only if enabled)
-  hooks/
+  deploy/
     postprovision.ps1          # APIM operation import
     postdeploy.ps1             # admin-settings upload + user invitation
 ```

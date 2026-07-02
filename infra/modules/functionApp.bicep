@@ -34,6 +34,9 @@ param functionsSubnetName string
 @description('Log Analytics workspace resource id.')
 param logAnalyticsId string
 
+@description('Extra application settings (name/value pairs) merged after the base settings. api/queues pass the hastegeo app config here; titiler passes none.')
+param appSettings array = []
+
 @description('Resource tags.')
 param tags object = {}
 
@@ -133,7 +136,7 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
     }
     siteConfig: {
       ftpsState: 'Disabled'
-      appSettings: [
+      appSettings: concat([
         {
           name: 'AzureWebJobsStorage__accountName'
           value: storageAccountName
@@ -150,7 +153,7 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsights.properties.ConnectionString
         }
-      ]
+      ], appSettings)
     }
   }
 }

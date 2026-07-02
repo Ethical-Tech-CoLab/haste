@@ -55,11 +55,39 @@
 | `azure.yaml` (api, titiler, queues, web services) | `backend-dev` | Phase 1 | US-001 | completed |
 | Map Bicep outputs → azd service targets | `backend-dev` | azure.yaml | US-001 | completed |
 | `azd provision` + `azd deploy` end-to-end test | `backend-validation` | azure.yaml | US-001 | in-progress |
+| `web` frontend config: `ui/.env.production` (static routes) + `VITE_AZURE_MAPS_CLIENT_ID` provision output | `backend-dev` | azure.yaml | US-001 | completed |
+| `web` SWA publish via `deploy/deploy-web.ps1` postdeploy hook (`swa deploy --env production`) — replaces the azd `web` service | `backend-dev` | azure.yaml | US-001 | completed |
 
 **Exit Criteria:**
 - [x] `azd provision` stands up a fresh `dev2` environment (idempotent adopt of the Bicep deploy)
 - [x] All three Function Apps deployed via `azd deploy` (api, titiler, queues) and reachable
-- [ ] `web` (SWA) deploy — blocked on per-environment frontend config (`.env.dev2`, `build:dev2`, swa config / AAD app registration)
+- [x] `web` (SWA) frontend config wired — resolved *not* via `.env.dev2`/`build:dev2`/AAD registration
+      (the current UI dropped those inputs). Deployed build needs only the static `/api/haste/*` routes
+      (committed `ui/.env.production`) plus the per-env Azure Maps client id (`VITE_AZURE_MAPS_CLIENT_ID`
+      provision output). SWA EasyAuth uses the built-in Entra provider (no custom registration); role
+      assignment is the Phase 3 invitation hook.
+- [x] `web` deployed to the SWA **production** environment and confirmed live (dev2): `default` env
+      `Ready`; `/` → 302 `/login` → `/.auth/login/aad`; placeholder gone. Deployed via
+      `deploy/deploy-web.ps1` (postdeploy), **not** an azd `web` service — azd only passes
+      `swa deploy --env production` when no `swa-cli.config.json` is in the service path, and that file
+      is required for local `swa start`. The hook builds the UI and calls `swa deploy --env production`
+      explicitly with the SWA token, preserving one-command `azd up`.
+- [x] **api/queues application settings ported to Bicep.** Root cause of the api/queues 404s: the
+      `functions`/`functionApp` modules set only 4 base settings (storage + App Insights); the ~30
+      hastegeo **app** settings the legacy `setup_infra.sh` set (`env`, `BLOB_*`, `QUEUE_*`,
+      `*_STORAGE_TYPE`, `RUNNER_TYPE`, `DATA_PATH`, `AZURE_BATCH_*`, `STATIC_APP_*`, `EMAIL_*`,
+      `TITILER_ENDPOINT`) were missing, so `hastegeo`'s import-time `Config()` left the worker unable to
+      index `function_app.py` → 0 functions. Now `functionApp.bicep` takes an `appSettings` array and
+      `functions.bicep` builds a shared set for api + queues only (titiler excluded). Storage/queue via
+      managed identity (`BLOB_ACCOUNT_URL` + existing role grants); `BLOB_CONNECTION_STRING` / batch key
+      (cross-RG existing ref) / ACS string via `listKeys()`/outputs (no Key Vault). Proven on dev2:
+      manual set → api indexed (404→401), queues indexed 7 triggers; then encoded in Bicep (what-if clean).
+- [x] Full one-shot `azd up` from a clean env confirmed (dev3, 2026-07-02): provision → 3 function
+      apps (41 ops indexed) → postdeploy (SWA→production, 41 APIM ops synced, backend keys injected,
+      first-admin seeded). Zero manual steps; SWA serves the auth-gated app; APIM→func routing = 200.
+      Caught + fixed a fresh-provision-only bug: `apimApis` backends can't `listKeys` the func host key
+      at provision time (host not running) → backends are now credential-less in Bicep and the key is
+      injected by the postdeploy hook.
 
 ---
 
@@ -70,15 +98,21 @@ Key Vault is introduced — derived secrets are deploy-time outputs wired by Bic
 
 | Task | Agent | Dependencies | Story Ref | Status |
 |---|---|---|---|---|
-| `hooks/postprovision.ps1` (APIM operation import) | `backend-dev` | Phase 2 | US-003 | not-started |
-| `hooks/postdeploy.ps1` (admin-settings upload + invitation) | `backend-dev` | Phase 2 | US-003 | not-started |
-| Wire ACS connection string output → function app settings | `backend-dev` | Phase 1 | US-004 | not-started |
-| Custom-domain DNS record hook (only when `emailSenderDomainType=Custom`) | `backend-dev` | Phase 1 | US-004 | not-started |
-| Validate hook idempotency + confirm no manual/plain-text secret | `backend-validation`, `security-validation` | hooks | US-003, US-004 | not-started |
+| APIM base APIs + backends + product links + hardcoded ops (`infra/modules/apimApis.bicep`) — the service alone left dev2 APIM empty, so the app's API routing was broken | `backend-dev` | Phase 2 | US-003 | completed |
+| APIM per-endpoint operation sync (`deploy/sync-apim-operations.ps1`, postdeploy) — additive, from the deployed function list; backend routing via an API-level `set-backend-service` policy so no per-op policy (avoids az rest's BOM-response bug on Windows) | `backend-dev` | Phase 2 | US-003 | completed |
+| Seed storage defaults (`deploy/seed-storage-defaults.ps1`) — admin settings **and** the first-admin user (`users_acl.json`), firewall open → **account-key** upload (skip-if-exists) → restore. Account key because the deployer has no blob-data RBAC (only the func identity does) — the old `--auth-mode login` version failed silently. The first-admin seed is required: a fresh env has no `users_acl.json`, so `GetUserById` throws before the auto-create and the UI renders blank. | `backend-dev` | Phase 2 | US-003 | completed |
+| `DEVELOPMENT_MODE` dev-only Bicep param (`developmentMode`, default false; dev2→true via `HASTE_DEVELOPMENT_MODE`) — auto-provision + anonymous auth. Prod stays false and manages users explicitly. | `backend-dev` | Phase 2 | US-003 | completed |
+| Self-invite the deployer (`deploy/invite-user.ps1`) — admin+contributor, listUsers dedup, requires `domain` in the body | `backend-dev` | Phase 2 | US-003 | completed |
+| `deploy/postdeploy.ps1` orchestrator (web publish → apim sync → admin settings → invite) + `azure.yaml` wiring | `backend-dev` | Phase 2 | US-003 | completed |
+| Wire ACS connection string output → function app settings | `backend-dev` | Phase 1 | US-004 | completed (part of the api/queues app-settings port; `EMAIL_CONNECTION_STRING`/`EMAIL_SENDER` from the communication module) |
+| Custom-domain DNS record hook (only when `emailSenderDomainType=Custom`) | `backend-dev` | Phase 1 | US-004 | dropped — the legacy scripts never provisioned email domains/DNS (email was an external prerequisite). Bicep provisions the Azure-managed domain; custom-domain DNS lives in the customer's zone and is out-of-band |
+| Validate hook idempotency + confirm no manual/plain-text secret | `backend-validation`, `security-validation` | hooks | US-003, US-004 | completed |
 
 **Exit Criteria:**
-- [ ] Hooks run idempotently on repeat `azd up`
-- [ ] No human-supplied secret; email works with the Azure-managed default
+- [x] Hooks run idempotently on repeat `azd up` — op-sync skips existing ops; admin-settings skips-if-exists; invite dedups on accepted users. Validated on dev2.
+- [x] No human-supplied secret — APIM backend keys via `listKeys()`, storage via managed identity + `listKeys()`, ACS from the communication output; nothing plaintext in the repo (detect-secrets passes). Email works with the Azure-managed default domain.
+- [x] APIM routing proven on dev2: `GET /api/haste/GetAzureMapsToken` through APIM → function backend → **200** (API-level policy + injected host key). Base APIs + 41 api ops + titiler + storage-proxy ops all live.
+- Note: SWA→APIM uses the SWA-managed product subscription; the full SWA→app path needs a browser login to confirm (routing itself is proven; structure matches the working dev1/prod).
 
 ---
 

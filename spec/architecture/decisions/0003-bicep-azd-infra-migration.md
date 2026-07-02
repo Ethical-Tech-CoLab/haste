@@ -114,7 +114,7 @@ accurate mirror of production rather than an idealized rewrite.
 |---|---|---|
 | Infrastructure (new) | `infra/` | New Bicep modules: identity, storage, network, monitoring, communication, apim, functions, batch, frontend, frontdoor |
 | azd config (new) | `azure.yaml` | Defines Function App + SWA services and hooks |
-| Deploy hooks (new) | `infra/hooks/` | PowerShell post-provision/post-deploy scripts |
+| Deploy hooks (new) | `deploy/` | PowerShell post-provision/post-deploy scripts |
 | Legacy setup | `setup/setup_infra.sh`, `setup/deploy_apps.sh` | Retired after parity confirmed |
 | Setup docs | `setup/README.md` | Rewritten for azd workflow |
 | Deployment docs | `docs/deployment.md` | Updated to azd workflow |

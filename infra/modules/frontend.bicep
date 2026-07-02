@@ -50,3 +50,6 @@ resource mapsAccount 'Microsoft.Maps/accounts@2023-06-01' = {
 output staticWebAppName string = staticWebApp.name
 output staticWebAppHostName string = staticWebApp.properties.defaultHostname
 output mapsAccountName string = mapsAccount.name
+// Client (app) id the SWA build embeds for Azure Maps anonymous auth
+// (VITE_AZURE_MAPS_CLIENT_ID; the token itself is minted server-side by the API).
+output mapsClientId string = mapsAccount.properties.uniqueId

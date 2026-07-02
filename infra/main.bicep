@@ -99,6 +99,9 @@ param emailCustomDomain string = ''
 @description('Provision Front Door + WAF in front of the Static Web App.')
 param enableFrontDoor bool = false
 
+@description('Dev-only: api/queues auto-provision any authenticated user as admin and use anonymous auth. Keep false for production.')
+param developmentMode bool = false
+
 // ---------------------------------------------------------------------------
 // Computed names — mirror the bash naming scheme exactly.
 // ---------------------------------------------------------------------------
@@ -232,6 +235,13 @@ module apim 'modules/apim.bicep' = {
   ]
 }
 
+// Existing reference to the resolved Batch account (env RG for Create, shared RG
+// for Existing) — used to read the primary key for the api/queues app settings.
+resource batchAccountRef 'Microsoft.Batch/batchAccounts@2024-07-01' existing = {
+  name: resolvedBatchAccountName
+  scope: resourceGroup(batchAccountRg)
+}
+
 module functions 'modules/functions.bicep' = {
   name: 'functions'
   scope: rg
@@ -246,11 +256,25 @@ module functions 'modules/functions.bicep' = {
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
     logAnalyticsId: monitoring.outputs.logAnalyticsId
+    // hastegeo application config (api + queues; titiler needs none).
+    batchAccountName: resolvedBatchAccountName
+    batchAccountLocation: location
+    batchPoolName: batchPoolMode == 'Create' ? createdBatchPoolName : existingBatchPoolId
+    acrLoginServer: wireAcr ? '${sharedAcrName}.azurecr.io' : ''
+    trainingImage: trainingImage
+    imageryprepImage: imageryprepImage
+    staticWebAppName: staticWebAppName
+    staticAppDomain: frontend.outputs.staticWebAppHostName
+    emailSenderDomain: communication.outputs.senderDomain
+    emailConnectionString: communication.outputs.connectionString
+    batchAccountKey: batchAccountRef.listKeys().primary
+    developmentMode: developmentMode
     tags: tags
   }
   dependsOn: [
     storage
     network
+    batchAccount
   ]
 }
 
@@ -266,6 +290,27 @@ module frontend 'modules/frontend.bicep' = {
   }
 }
 
+// APIM base APIs + backends + product links + hardcoded ops. Needs the SWA's
+// linked-backend product (frontend, via staticWebAppHostName) and the function
+// apps (functions, for backend URLs + host keys). Per-endpoint operations are
+// added by the postdeploy hook (hooks/sync-apim-operations.ps1).
+module apimApis 'modules/apimApis.bicep' = {
+  name: 'apimApis'
+  scope: rg
+  params: {
+    apimName: apimName
+    functionApiName: functionApiName
+    functionTitilerName: functionTitilerName
+    staticWebAppHostName: frontend.outputs.staticWebAppHostName
+    storageAccountName: storageAccountName
+  }
+  // apim is ordered transitively (apimApis -> frontend -> apim). functions has no
+  // implicit edge (backends reference the apps by name / listKeys), so keep it.
+  dependsOn: [
+    functions
+  ]
+}
+
 // Custom SWA invitation role assigned to the API app's system-assigned identity.
 module roles 'modules/roles.bicep' = {
   name: 'roles'
@@ -275,9 +320,8 @@ module roles 'modules/roles.bicep' = {
     mapsAccountName: mapsAccountName
     functionSystemPrincipalId: functions.outputs.apiSystemPrincipalId
   }
-  dependsOn: [
-    frontend
-  ]
+  // frontend is ordered before roles transitively (roles -> functions ->
+  // frontend, since functions reads the SWA hostname for STATIC_APP_DOMAIN).
 }
 
 // Batch account (Create mode only) in the env RG.
@@ -354,6 +398,9 @@ output FUNCTION_API_NAME string = functionApiName
 output FUNCTION_TITILER_NAME string = functionTitilerName
 output FUNCTION_QUEUE_NAME string = functionQueueName
 output STATIC_WEB_APP_NAME string = staticWebAppName
+// Consumed by the `web` service prebuild hook to embed VITE_AZURE_MAPS_CLIENT_ID
+// in the SWA build (see azure.yaml / ui/.env.production).
+output VITE_AZURE_MAPS_CLIENT_ID string = frontend.outputs.mapsClientId
 output APIM_NAME string = apimName
 output STORAGE_ACCOUNT_NAME string = storageAccountName
 output BATCH_ACCOUNT_NAME string = resolvedBatchAccountName
