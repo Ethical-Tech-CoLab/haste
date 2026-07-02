@@ -1,6 +1,6 @@
 # Feature: Infrastructure as Code Migration (Bicep + azd)
 
-**Status:** approved
+**Status:** implemented
 **Author:** memachado
 **Date:** 2026-06-25
 **Target Release:** TBD
@@ -36,20 +36,20 @@ and onboarding/operating the platform stays high-risk.
 
 ## Success Criteria
 
-- [ ] `azd up` provisions and deploys a complete HASTE environment on Windows,
+- [x] `azd up` provisions and deploys a complete HASTE environment on Windows,
       macOS, and Linux with no bash dependency.
-- [ ] `az deployment sub what-if` (via `azd provision --preview`) runs clean
+- [x] `az deployment sub what-if` (via `azd provision --preview`) runs clean
       against an existing environment, confirming the Bicep reflects current
       deployed state.
-- [ ] All resources from `setup_infra.sh` are represented as Bicep modules:
+- [x] All resources from `setup_infra.sh` are represented as Bicep modules:
       identity, storage, network, monitoring, apim, functions, batch, frontend,
       and feature-flagged frontdoor.
-- [ ] The three Function Apps and the Static Web App deploy via `azd` services.
-- [ ] APIM operation import, admin-settings upload, and bootstrap user
+- [x] The three Function Apps and the Static Web App deploy via `azd` services.
+- [x] APIM operation import, admin-settings upload, and bootstrap user
       invitation run as PowerShell `azd` hooks.
-- [ ] The email backend (ACS) is provisioned in-IaC so there is no manually
+- [x] The email backend (ACS) is provisioned in-IaC so there is no manually
       supplied secret; the sender domain is configurable (Azure-managed or custom).
-- [ ] `setup/setup_infra.sh` and `setup/deploy_apps.sh` are removed once parity
+- [x] `setup/setup_infra.sh` and `setup/deploy_apps.sh` are removed once parity
       is confirmed; `setup/README.md` and `docs/deployment.md` are updated.
 
 ## HASTE Components Affected

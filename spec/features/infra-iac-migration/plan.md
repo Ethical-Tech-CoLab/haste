@@ -17,7 +17,7 @@
 
 ---
 
-### Phase 1: Bicep modules reproducing current state — TBD
+### Phase 1: Bicep modules reproducing current state — done
 
 **Goal:** Stand up `infra/` Bicep that mirrors the resources created by
 `setup_infra.sh`, validated with `what-if` against a live environment.
@@ -46,7 +46,7 @@
 
 ---
 
-### Phase 2: azd orchestration + app deploy — TBD
+### Phase 2: azd orchestration + app deploy — done
 
 **Goal:** Wire `azure.yaml` so `azd up` provisions and deploys.
 
@@ -54,7 +54,7 @@
 |---|---|---|---|---|
 | `azure.yaml` (api, titiler, queues, web services) | `backend-dev` | Phase 1 | US-001 | completed |
 | Map Bicep outputs → azd service targets | `backend-dev` | azure.yaml | US-001 | completed |
-| `azd provision` + `azd deploy` end-to-end test | `backend-validation` | azure.yaml | US-001 | in-progress |
+| `azd provision` + `azd deploy` end-to-end test | `backend-validation` | azure.yaml | US-001 | completed |
 | `web` frontend config: `ui/.env.production` (static routes) + `VITE_AZURE_MAPS_CLIENT_ID` provision output | `backend-dev` | azure.yaml | US-001 | completed |
 | `web` SWA publish via `deploy/deploy-web.ps1` postdeploy hook (`swa deploy --env production`) — replaces the azd `web` service | `backend-dev` | azure.yaml | US-001 | completed |
 
@@ -91,7 +91,7 @@
 
 ---
 
-### Phase 3: Imperative hooks + email domain — TBD
+### Phase 3: Imperative hooks + email domain — done
 
 **Goal:** Port the imperative tail and finish the email sender-domain wiring. No
 Key Vault is introduced — derived secrets are deploy-time outputs wired by Bicep.
@@ -107,6 +107,8 @@ Key Vault is introduced — derived secrets are deploy-time outputs wired by Bic
 | Wire ACS connection string output → function app settings | `backend-dev` | Phase 1 | US-004 | completed (part of the api/queues app-settings port; `EMAIL_CONNECTION_STRING`/`EMAIL_SENDER` from the communication module) |
 | Custom-domain DNS record hook (only when `emailSenderDomainType=Custom`) | `backend-dev` | Phase 1 | US-004 | dropped — the legacy scripts never provisioned email domains/DNS (email was an external prerequisite). Bicep provisions the Azure-managed domain; custom-domain DNS lives in the customer's zone and is out-of-band |
 | Validate hook idempotency + confirm no manual/plain-text secret | `backend-validation`, `security-validation` | hooks | US-003, US-004 | completed |
+| Designated first admin (`HASTE_FIRST_ADMIN_EMAIL`) — the seed + invite hooks honor it, falling back to the signed-in deployer; closes the CI/service-principal gap where a non-interactive prod deploy has no signed-in user and would end up with no admin | `backend-dev` | seed + invite hooks | US-003 | completed |
+| Transparent Batch image tags (`deploy/resolve-batch-image-tags.ps1`, preprovision) — when `batchPoolMode=Existing`, reads the shared pool's `containerImageNames` and sets `HASTE_TRAINING_IMAGE`/`HASTE_IMAGERYPREP_IMAGE` (never clobbering an explicit override), so operators don't hand-match the immutable pool's tags | `backend-dev` | Phase 2 | US-003 | completed |
 
 **Exit Criteria:**
 - [x] Hooks run idempotently on repeat `azd up` — op-sync skips existing ops; admin-settings skips-if-exists; invite dedups on accepted users. Validated on dev2.
@@ -116,21 +118,21 @@ Key Vault is introduced — derived secrets are deploy-time outputs wired by Bic
 
 ---
 
-### Phase 4: Retire bash + docs — TBD
+### Phase 4: Retire bash + docs — done
 
 **Goal:** Remove the legacy scripts and document the azd workflow.
 
 | Task | Agent | Dependencies | Story Ref | Status |
 |---|---|---|---|---|
-| Remove `setup/setup_infra.sh`, `setup/deploy_apps.sh` | `backend-dev` | Phases 1–3 confirmed | US-005 | not-started |
-| Rewrite `setup/README.md` for azd | `backend-dev` | — | US-005 | not-started |
-| Update `docs/deployment.md` | `backend-dev` | — | US-005 | not-started |
-| Document configuration modes (Batch create-vs-BYO, email sender domain, Front Door flag) in the how-to/configuration guides | `backend-dev` | — | US-005 | not-started |
-| Update spec statuses → implemented | `orchestrator` | All | — | not-started |
+| Remove `setup/setup_infra.sh`, `setup/deploy_apps.sh` | `backend-dev` | Phases 1–3 confirmed | US-005 | completed |
+| Rewrite `setup/README.md` for azd | `backend-dev` | — | US-005 | completed |
+| Update `docs/deployment.md` | `backend-dev` | — | US-005 | completed |
+| Document configuration modes (Batch create-vs-BYO + image-tag immutability, email sender domain, Front Door flag, development mode, first-admin seed) in `docs/configuration.md` | `backend-dev` | — | US-005 | completed |
+| Update spec statuses → implemented | `orchestrator` | All | — | completed |
 
 **Exit Criteria:**
-- [ ] Legacy scripts removed
-- [ ] Docs describe only the azd workflow
+- [x] Legacy scripts removed
+- [x] Docs describe only the azd workflow
 
 ---
 

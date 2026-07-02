@@ -96,7 +96,7 @@ EMAIL_CONNECTION_STRING = @Microsoft.KeyVault(SecretUri=https://<vault>.vault.az
 
 ### 4.3 Function master keys
 
-The deployment scripts (`setup/deploy_apps.sh`, `.github/scripts/deploy_apps.sh`) write the Function App master key to `.env` during setup. **Treat this file as sensitive and remove it from any machine that is not your local workstation.** Rotate this key periodically in production via:
+The CI deploy script (`.github/scripts/deploy_apps.sh`) writes the Function App master key to `.env` during deployment. **Treat this file as sensitive and remove it from any machine that is not your local workstation.** (The `azd` workflow instead injects the Function host key into the APIM backends via the postdeploy hook and does not persist it to disk.) Rotate this key periodically in production via:
 
 ```bash
 az functionapp keys set --resource-group <rg> --name <function-app> --key-type masterKey --key-name default
