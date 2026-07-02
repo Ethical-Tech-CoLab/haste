@@ -27,8 +27,8 @@ docker-compose -f docker/docker-compose.yml up
 | Service | URL |
 |---------|-----|
 | UI | http://localhost:4280 |
-| REST API | http://localhost:7071 |
-| TiTiler tile server | http://localhost:8080 |
+| REST API | http://localhost:7071/api/ |
+| TiTiler tile server | http://localhost:8000 |
 | Azurite storage emulator | http://localhost:10000 |
 
 > **Note:** The Docker Compose stack is for local development and evaluation only. It uses development defaults (in-memory storage emulator, disabled auth, wildcard CORS) that are not suitable for production. See [docs/deployment.md](docs/deployment.md) for production deployment.
