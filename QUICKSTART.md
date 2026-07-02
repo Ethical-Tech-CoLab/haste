@@ -362,7 +362,7 @@ Report success to the user only when **all** of these hold:
 - [ ] `docker/.env` written with correct `HOST_IP`, `DOCKER_GID`, and GPU flag.
 - [ ] `docker compose ps` shows all long-running services `Up` and `data-init` `Exited (0)`.
 - [ ] Gate 5 health checks all pass (Azurite, API, TiTiler, UI).
-- [ ] The UI loads at `http://<HOST_IP>:4280` and auto-logs-in a dev user.
+- [ ] The UI loads at `http://<HOST_IP>:4280` and you can complete the SWA emulator mock-login with role `administrators` (or `contributors`).
 - [ ] You told the user the profile (`gpu`/`cpu`) and, if `cpu`, that
       training/inference will be slow or limited.
 - [ ] On Apple Silicon: you exported `DOCKER_DEFAULT_PLATFORM=linux/amd64`,
