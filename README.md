@@ -35,6 +35,14 @@ docker compose -f docker/docker-compose.yml up
 
 > For Azure-connected development and production deployment, see [Project Setup](#project-setup) below and the [full documentation](https://microsoft.github.io/haste).
 
+### See it in action
+
+<p align="center">
+  <video src="assets/haste-animation.mp4" autoplay loop muted playsinline width="100%">
+    Your browser does not support embedded video. <a href="assets/haste-animation.mp4">Watch the HASTE demo</a>.
+  </video>
+</p>
+
 ## Documentation
 
 Full documentation is published at **[https://microsoft.github.io/haste](https://microsoft.github.io/haste)** and covers:
