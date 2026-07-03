@@ -38,9 +38,7 @@ docker compose -f docker/docker-compose.yml up
 ### See it in action
 
 <p align="center">
-  <video src="assets/haste-animation.mp4" autoplay loop muted playsinline width="100%">
-    Your browser does not support embedded video. <a href="assets/haste-animation.mp4">Watch the HASTE demo</a>.
-  </video>
+  <img src="assets/haste-animation.webp" alt="HASTE demo" width="100%">
 </p>
 
 ## Documentation
