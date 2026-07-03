@@ -10,10 +10,10 @@ HASTE is an AI-powered disaster assessment framework that leverages satellite im
 ## Features
 
 - **Automated Disaster Assessment**: AI-powered analysis of satellite imagery for damage assessment
-- **Multi-Source Imagery Support**: Compatible with various satellite imagery providers (Maxar, Planet, AWS S3)
+- **Multi-Source Imagery Support**: Compatible with various satellite imagery providers (Vantor, Planet)
 - **Real-time Processing**: Fast processing of pre and post-event imagery with Cloud Optimized GeoTIFF (COG) output
 - **Web Interface**: User-friendly React-based interface for project management, labeling, and visualization
-- **Azure Cloud Integration**: Scalable cloud-based processing with Azure Functions, Azure Batch, Blob Storage, CosmosDB, and Data Lake
+- **Azure Cloud Integration**: Scalable cloud-based processing with Azure Functions, Azure Batch, Blob Storage, and Data Lake
 - **ML Training & Inference**: End-to-end model training and inference pipelines with GPU support via Azure Batch
 - **Tile Serving**: Built-in TiTiler-based tile server for serving Cloud Optimized GeoTIFFs
 
@@ -22,10 +22,10 @@ HASTE is an AI-powered disaster assessment framework that leverages satellite im
 | Component | Technology | Description |
 |-----------|-----------|-------------|
 | **UI** | React + Vite | Single-page app for project management, labeling, and visualization |
-| **REST API** (`hastefuncapi`) | Python Azure Functions | 28 HTTP endpoints for CRUD operations |
-| **Queue Workers** (`hastefuncqueues`) | Python Azure Functions | 6 queue-triggered functions for async processing |
+| **REST API** (`hastefuncapi`) | Python Azure Functions | HTTP endpoints for CRUD operations |
+| **Queue Workers** (`hastefuncqueues`) | Python Azure Functions | Queue-triggered functions for async processing |
 | **Tile Server** (`titilerfuncapi`) | TiTiler + FastAPI | Cloud Optimized GeoTIFF tile serving |
-| **Core Library** (`haste`) | Python package | Shared models, processors, data layers, and utilities |
+| **Core Library** (`hastegeo`) | Python package | Shared models, processors, data layers, runners, and utilities |
 
 ## Where to start
 
