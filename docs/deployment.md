@@ -84,14 +84,20 @@ For production deployments, follow the [Secure Configuration Guidance](security-
 
 ## CI/CD Pipeline
 
-### Azure Pipelines
+### Security scanning
 
-The project uses Azure Pipelines (`azure-pipelines.yml`) for security and compliance scanning on pushes to `master`:
+Security and compliance scanning runs on GitHub Actions against `main` (on every push and
+pull request):
 
-- **CredScan** — Credential scanning
-- **VulnerabilityAssessment** — Security vulnerability detection
-- **PoliCheck** — Content policy checking
-- **ComponentGovernanceComponentDetection** — Dependency scanning (High alert level)
+- **[CodeQL](https://github.com/microsoft/haste/blob/main/.github/workflows/codeql.yml)** —
+  static code analysis for Python, JavaScript/TypeScript, and GitHub Actions workflows, on
+  push/PR plus a weekly schedule. Findings surface in the repository's
+  **Security → Code scanning** tab.
+- **[Secret scanning](https://github.com/microsoft/haste/blob/main/.github/workflows/secret-scan.yml)** —
+  [Gitleaks](https://github.com/gitleaks/gitleaks) scans each push/PR commit range and fails
+  the build if a secret is detected.
+- **Dependency alerts** — GitHub-native Dependabot flags vulnerable dependencies via the
+  repository's security settings.
 
 ### Docker Image Build & Push
 

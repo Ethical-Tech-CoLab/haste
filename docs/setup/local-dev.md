@@ -33,11 +33,18 @@ The local stack runs entirely from `docker/docker-compose.yml`:
 
 - **Docker** with Compose v2 (`docker compose version`)
 - ~100 GB free disk for the full image set
-- **Apple Silicon:** images are amd64-only — export
-  `DOCKER_DEFAULT_PLATFORM=linux/amd64` before every build/up command (runs under
-  emulation)
-- **GPU** is Linux-only; on macOS/Windows the stack runs CPU-only, so training/inference
-  jobs are slow or impractical
+
+```{warning}
+**Apple Silicon:** the images are amd64-only, so you must export
+`DOCKER_DEFAULT_PLATFORM=linux/amd64` before every `build`/`up` command. Docker Desktop
+then runs them under emulation — functional, just somewhat slower.
+```
+
+```{note}
+**GPU** acceleration is Linux-only. On macOS or Windows the stack runs CPU-only, so
+training and inference jobs are slow or impractical — the rest of the app (UI, project and
+imagery management, tiling) is fully usable for evaluation.
+```
 
 ## Bring it up
 
@@ -64,8 +71,10 @@ Once running:
 - **API** — `http://<HOST_IP>:7071/api/`
 - **Azurite blob** — `http://<HOST_IP>:10000`
 
+```{important}
 At the SWA mock-login form, set **User's roles** to `administrators`, or the app bounces
 you back to the login page.
+```
 
 ```{tip}
 For platform-specific profiles (Apple Silicon, GPU vs. CPU), the health-check gates, the

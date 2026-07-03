@@ -269,9 +269,9 @@ See §3.1 for the recommended SWA linked-backend topology.
 
 The UI does not send explicit CSRF tokens. Protection depends on the SWA Easy Auth session cookie's `SameSite=Lax` attribute and on `Origin`/`Referer` enforcement at the SWA edge. If you replace the auth layer or front the API with a different proxy, reintroduce equivalent CSRF protection.
 
-### 8.3 Self-hosted CI runner — applies if you fork the repo
+### 8.3 CI runners — applies if you fork the repo
 
-If you fork HASTE and reuse the included `azure-pipelines.yml` with a self-hosted runner on a public fork, fork-pull-request builds can execute arbitrary code on your runner. Either disable Azure Pipelines and rely on GitHub Actions, or restrict pipeline triggers to internal branches before exposing the fork.
+CI runs on GitHub Actions with GitHub-hosted runners (CodeQL and Gitleaks secret scanning); the legacy `azure-pipelines.yml`, which used a self-hosted pool, has been removed. If you fork HASTE and add self-hosted runners, note that fork pull-request builds can execute arbitrary code on a self-hosted runner. Keep untrusted-fork PRs on GitHub-hosted runners, or restrict workflow triggers to internal branches before exposing the fork.
 
 ### 8.4 Path traversal hardening in chunked uploads
 
