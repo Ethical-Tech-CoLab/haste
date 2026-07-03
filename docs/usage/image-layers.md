@@ -33,6 +33,18 @@ desired project from the list of projects. The project details will be displayed
 includes a button called **Create Image Layer**. Clicking this will take you to the
 Image Layer creation form.
 
+```{admonition} Choose a workflow
+:class: tip
+
+The creation form has a **workflow** selector that determines what you can do with the
+layer:
+
+- **Standard** — draw labels and train a model for a wall-to-wall damage map
+  ({doc}`Damage Mapping <damage-mapping>`).
+- **Building** — embed building footprints and label them interactively
+  ({doc}`Rapid Building Assessment <rapid-building-assessment>`).
+```
+
 Add imagery files by providing publicly accessible URLs or uploading files from a local
 directory that show the Area of Interest (AOI). You can also combine files from both a
 URL and a local directory. If multiple files are provided in a section, they will be
@@ -42,6 +54,30 @@ to the same AOI. All files must be valid GeoTIFF (`.tif`) files.
 <video controls width="100%" src="../_static/usage/imageLayers/image-layers-create-a-new-layer.mp4">
 Your browser does not support the video tag.
 </video>
+
+### Custom building footprints (optional)
+
+By default, HASTE downloads building footprints automatically from **Overture Maps** for the
+area covered by your post-event imagery. If you'd rather use your own, expand the **Custom
+Building Footprints** panel on the create form, turn on **Use custom building footprints
+(skip Overture download)**, and supply a single **GeoPackage (`.gpkg`)** — either a publicly
+accessible URL or a file upload (one or the other).
+
+HASTE reprojects the file to EPSG:4326 and clips it to the imagery area before use. The
+Overture and custom paths produce the same kind of footprint layer, so the rest of the
+workflow is identical either way.
+
+```{note}
+A custom footprints file must be:
+
+- **Format** — a GeoPackage (`.gpkg`), one file per layer, up to 500 MB.
+- **Projected** — it must have a coordinate reference system embedded (any CRS works; it's
+  reprojected to EPSG:4326).
+- **Polygons** — Polygon / MultiPolygon features only (other geometry types are dropped).
+- **Hosted (URL option)** — the URL must point to Azure Blob Storage or AWS S3.
+
+Footprints are set when the layer is created and can't be changed afterward.
+```
 
 ## Edit an Image Layer
 
