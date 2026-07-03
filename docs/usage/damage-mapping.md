@@ -119,9 +119,11 @@ Leave these at their defaults if you're unsure:
 When training and inference finish, open the model's **Results** menu for several ways to
 use the predictions.
 
+![The Results menu on a trained model](../_static/usage/results/results-menu.png)
+
 ### View (built-in visualizer)
 
-![Built-in damage visualizer](../_static/usage/results/results-visualizer.png)
+![The damage visualizer with the predicted building-damage layer](../_static/usage/results/damage-visualizer.png)
 
 **View** opens the visualizer: the pre- and post-event imagery side by side with a swipe
 control, the predicted damage layer overlaid on both, and an optional **raw predictions**
@@ -129,9 +131,9 @@ layer you can toggle on. Imagery sliders (opacity, contrast, hue, saturation) an
 shortcuts — `A` (all pre-event), `S` (split), `D` (all post-event) — help you inspect and
 share the result.
 
-### Download the outputs
+![The raw per-pixel predictions layer toggled on](../_static/usage/results/raw-predictions-layer.png)
 
-![Download options in the Results menu](../_static/usage/results/results-download-geopackage.png)
+### Download the outputs
 
 - **Download Geopackage (`.gpkg`)** — the predicted damage layer, for ArcGIS, QGIS, and other
   geospatial tools.

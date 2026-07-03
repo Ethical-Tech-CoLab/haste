@@ -45,6 +45,8 @@ layer:
   ({doc}`Rapid Building Assessment <rapid-building-assessment>`).
 ```
 
+![The workflow selector on the Create Image Layer form](../_static/usage/imageLayers/image-layers-workflow-selector.png)
+
 Add imagery files by providing publicly accessible URLs or uploading files from a local
 directory that show the Area of Interest (AOI). You can also combine files from both a
 URL and a local directory. If multiple files are provided in a section, they will be
@@ -67,6 +69,8 @@ HASTE reprojects the file to EPSG:4326 and clips it to the imagery area before u
 Overture and custom paths produce the same kind of footprint layer, so the rest of the
 workflow is identical either way.
 
+![The Custom Building Footprints panel on the Create Image Layer form](../_static/usage/imageLayers/image-layers-custom-footprints.png)
+
 ```{note}
 A custom footprints file must be:
 
@@ -78,6 +82,16 @@ A custom footprints file must be:
 
 Footprints are set when the layer is created and can't be changed afterward.
 ```
+
+## Download layer data
+
+An image layer's **⋯** (more actions) menu offers exports that don't depend on any model:
+
+- **Export Labels to GeoJSON** — the labels drawn on the layer.
+- **Download Building Footprints** — the footprints used for the layer (Overture or your own).
+- **Download Valid Area Mask** — the area actually covered by the imagery.
+
+![The image layer more-actions menu](../_static/usage/imageLayers/image-layers-downloads.png)
 
 ## Edit an Image Layer
 

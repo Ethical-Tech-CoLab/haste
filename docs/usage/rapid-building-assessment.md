@@ -1,8 +1,8 @@
 <!-- SOURCE: Authored from PR #42 (building labeling workflow) and the current UI
      code (ui/src/Components/InteractiveLabeler/*, BuildingValidation/*,
      CreateEditEmbeddingModal.jsx, ProjectManagement/EmbeddingModelRow.jsx).
-     No in-app Help Docs equivalent exists yet, so this page has no
-     screenshots/videos — add media once the in-app docs cover it. -->
+     Screenshots captured from the app, stored under
+     docs/_static/usage/interactive/. -->
 
 # Rapid Building Assessment
 
@@ -35,7 +35,11 @@ Footprints are sourced automatically from Overture Maps, or you can supply your 
 
 ## Step 1 — Embed the buildings
 
-On the image layer, click **Embed** and configure:
+On the image layer, click the **Embed** button:
+
+![The Embed button on a building-workflow image layer](../_static/usage/interactive/embed-button.png)
+
+In the **New Embedding** dialog, configure:
 
 - **Embedding backbone** — **MOSAIKS** (random convolutional features) or **DINOv2**
   (ViT-S/14 or ViT-B/14). MOSAIKS is the lightweight default.
@@ -43,9 +47,13 @@ On the image layer, click **Embed** and configure:
 - **Resize factor** — how much to upscale the crop around each footprint (default 4 for MOSAIKS).
 - **Batch size** — how many buildings to process at once.
 
+![The New Embedding dialog](../_static/usage/interactive/embed-modal.png)
+
 Click **Embed** to queue the job. It analyzes the imagery around every footprint, producing
 a feature vector per building plus vector tiles (PMTiles) for fast map display. When it
 finishes, an **embedding row** appears with an **Interactive Label** button.
+
+![The embedding row with its Interactive Label button](../_static/usage/interactive/embedding-row.png)
 
 ```{tip}
 An *embedding* is a compact set of numbers capturing what each building looks like in the
@@ -59,6 +67,8 @@ Click **Interactive Label** to open the map-based labeler: satellite imagery (wi
 pre-/post-event toggle), building footprints (visible at zoom 15 and closer), and a side
 panel with the class selector, counts, a view toggle, and quality metrics.
 
+![The Interactive Labeler, Labeled view](../_static/usage/interactive/labeler-labeled.png)
+
 - **Left-click** a building to label it with the selected class; **right-click** to remove a label.
 - **Ctrl+drag** (Cmd+drag on macOS) to box-select and label many buildings at once.
 - **Classes:** **Intact** (green), **Damaged** (red), **Cloudy** (purple) for obscured
@@ -71,6 +81,8 @@ Once you've labeled at least **3 buildings across 2+ classes**, an in-browser mo
 damage for every building in view. Toggle **View: Labeled ↔ Predicted** to compare. The
 panel shows holdout **precision / recall / F1 for the Damaged class** so you can watch
 quality improve as you label diverse examples.
+
+![The Interactive Labeler in Predicted view, with holdout metrics](../_static/usage/interactive/labeler-predicted.png)
 
 ## Step 3 — Predict all buildings
 
@@ -90,6 +102,8 @@ open the new embedding row.
 Open **Building Validation** for the layer to spot-check the predictions. It loads a random
 sample of footprints (~200 by default) with the pre-/post-event imagery.
 
+![The Building Validation tool](../_static/usage/interactive/building-validation.png)
+
 - Select a building and label it **Damaged**, **Not Damaged**, or **Unknown**.
 - **Shortcuts:** `1`/`2`/`3` to label; arrow keys to move Prev/Next (auto-advances to the
   next unlabeled). Filter by label status; a progress bar tracks your coverage.
@@ -102,13 +116,20 @@ These human labels are the **ground truth** the reports compare predictions agai
 
 From the embedding row's **Reports** menu:
 
+![The Reports menu on the embedding row](../_static/usage/interactive/reports-menu.png)
+
 - **Validation Report** — matches predictions against your validation labels: overall
   accuracy, per-class precision/recall/F1 (Damaged, Not Damaged), macro-F1, and a confusion
   matrix.
+
+![The Validation Report](../_static/usage/interactive/validation-report.png)
+
 - **Assessment Report** — summarizes predictions across the layer (total, scored vs.
   cloud-excluded, count and % predicted damaged) and, using your validation sample, estimates
   the **total damaged buildings with a 95% confidence interval**, plus a precision–recall
   curve.
+
+![The Assessment Report](../_static/usage/interactive/assessment-report.png)
 
 ## Tips
 
