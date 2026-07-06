@@ -32,15 +32,6 @@ rest of the image. This step is required before training.
 
 **Launch the tool** from the Projects page by clicking **Launch** next to the image layer.
 
-### Adjust the imagery
-
-![Labeling imagery properties panel](../_static/usage/labeling/labeling-imagery-properties.png)
-
-Tune the view of the pre-/post-event imagery: **Opacity**, **Contrast**, **Hue Rotation**,
-and **Saturation** sliders (with **Reset**). Toggle between post- and pre-event imagery with
-the imagery switch or `Ctrl+Alt+C` — if you didn't upload pre-event imagery, the tool falls
-back to the Azure Basemap.
-
 ### Draw labels
 
 ![Labeling drawing tools](../_static/usage/labeling/labeling-drawing-tools.png)
@@ -52,6 +43,15 @@ annotate. Then pick a label class:
 
 You must select **both a tool and a class** to draw a label. Click **Save** to store your
 labels, or the arrow next to **Save** to save and start training in one step.
+
+### Adjust the imagery
+
+To make damage easier to see while you label, tune the view of the pre-/post-event imagery:
+**Opacity**, **Contrast**, **Hue Rotation**, and **Saturation** sliders (with **Reset**).
+Toggle between post- and pre-event imagery with the imagery switch or `Ctrl+Alt+C` — if you
+didn't upload pre-event imagery, the tool falls back to the Azure Basemap.
+
+![Labeling imagery properties panel](../_static/usage/labeling/labeling-imagery-properties.png)
 
 ### Tips for effective labeling
 
