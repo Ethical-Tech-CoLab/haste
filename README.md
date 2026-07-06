@@ -31,9 +31,11 @@ docker compose -f docker/docker-compose.yml up
 | TiTiler tile server | http://localhost:8000 |
 | Azurite storage emulator | http://localhost:10000 |
 
-> **Note:** The Docker Compose stack is for local development and evaluation only. It uses development defaults (in-memory storage emulator, disabled auth, wildcard CORS) that are not suitable for production.
-
-> For Azure-connected development and production deployment, see [Project Setup](#project-setup) below and the [full documentation](https://microsoft.github.io/haste).
+> **Note:** This stack is for local development and evaluation only — it uses development
+> defaults (in-memory storage emulator, disabled auth, wildcard CORS) that aren't suitable
+> for production. To stand up a production environment on Azure, follow the
+> [Deployment Guide](https://microsoft.github.io/haste/deployment.html) and
+> [Configuration Guide](https://microsoft.github.io/haste/configuration.html).
 
 ### See it in action
 
@@ -43,14 +45,23 @@ docker compose -f docker/docker-compose.yml up
 
 ## Documentation
 
-Full documentation is published at **[https://microsoft.github.io/haste](https://microsoft.github.io/haste)** and covers:
+Full documentation is published at **[microsoft.github.io/haste](https://microsoft.github.io/haste)**:
 
-- [User Guide](https://microsoft.github.io/haste/usage/overview.html) — how to use the application end to end
-- [Local Development](https://microsoft.github.io/haste/setup/local-dev.html)
-- [Configuration Guide](https://microsoft.github.io/haste/configuration.html)
-- Production Setup - [Deployment Guide](https://microsoft.github.io/haste/deployment.html) * [Secure Configuration Guidance](https://microsoft.github.io/haste/security-configuration.html)
-- [Architecture](https://microsoft.github.io/haste/architecture.html)
-- [API Reference](https://microsoft.github.io/haste/api/modules.html)
+**Using HASTE**
+
+- [User Guide](https://microsoft.github.io/haste/usage/overview.html) — create projects, add imagery, label, train, and assess damage end to end
+
+**Setup & deployment**
+
+- [Local Development](https://microsoft.github.io/haste/setup/local-dev.html) — run the full stack locally with Docker Compose
+- [Deployment Guide](https://microsoft.github.io/haste/deployment.html) — deploy to Azure with a single `azd up`
+- [Configuration Guide](https://microsoft.github.io/haste/configuration.html) — all deployment settings
+- [Secure Configuration Guidance](https://microsoft.github.io/haste/security-configuration.html) — production hardening checklist
+
+**Reference**
+
+- [Architecture](https://microsoft.github.io/haste/architecture.html) — how the components fit together
+- [API Reference](https://microsoft.github.io/haste/api/modules.html) — REST, queue, and tile-server APIs
 
 Source for the docs lives in [`docs/`](docs/) and is built with [Jupyter Book](https://jupyterbook.org/).
 
