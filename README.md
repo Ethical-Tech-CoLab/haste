@@ -38,7 +38,7 @@ docker compose -f docker/docker-compose.yml up
 ### See it in action
 
 <p align="center">
-  <img src="assets/haste-animation.webp" alt="HASTE demo" width="100%">
+  <img src="assets/haste-animation.webp" alt="HASTE demo">
 </p>
 
 ## Documentation
