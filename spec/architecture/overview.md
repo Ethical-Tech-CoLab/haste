@@ -96,8 +96,8 @@ HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-dr
 - **Database:** Cosmos DB
 - **Hosting:** Azure Static Web Apps
 - **Auth:** Entra ID (MSAL)
-- **CI/CD:** GitHub Actions (deploy-apps, docker-build-and-push, docs-deploy, secret-scan)
-- **Compliance:** Azure Pipelines (CredScan, PoliCheck, Component Governance)
+- **CI/CD:** GitHub Actions (deploy-apps, docker-build-and-push, docs-deploy, codeql, secret-scan)
+- **Compliance:** GitHub Actions security scanning (CodeQL code scanning, Gitleaks secret scan) plus GitHub-native Dependabot dependency alerts
 
 ## Agent Architecture
 

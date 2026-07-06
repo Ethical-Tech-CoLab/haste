@@ -23,5 +23,5 @@ This design ensures:
 - **Monitoring**: Comprehensive logging and telemetry across all operations
 
 :::{note}
-The function_app modules use Azure Functions decorators and require specific environment configuration including Azure Storage, Cosmos DB, Azure Batch, and compute resources for full functionality. See the {doc}`../getting-started` guide for configuration details.
+The function_app modules use Azure Functions decorators and require specific environment configuration including Azure Storage, Cosmos DB, Azure Batch, and compute resources for full functionality. See the {doc}`../configuration` guide for configuration details.
 :::

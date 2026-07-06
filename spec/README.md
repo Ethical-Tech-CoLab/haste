@@ -12,8 +12,8 @@ This directory contains all feature specs, modification proposals, and architect
 | **Tile Server** | `api/titilerfuncapi/` | TiTiler / FastAPI | COG tile serving |
 | **UI** | `ui/src/` | React / Vite / Fluent UI | Projects, Labeling Tool, Visualizer, Admin, Model Catalog |
 | **Docker Dev** | `docker/` | Docker Compose | Full local stack with Azurite emulator |
-| **Infra / CI** | `.github/workflows/` | GitHub Actions | deploy-apps, docker-build-and-push, docs-deploy, secret-scan |
-| **Compliance CI** | `azure-pipelines.yml` | Azure Pipelines | CredScan, PoliCheck, Component Governance |
+| **Infra / CI** | `.github/workflows/` | GitHub Actions | deploy-apps, docker-build-and-push, docs-deploy, codeql, secret-scan |
+| **Compliance CI** | `.github/workflows/codeql.yml`, `secret-scan.yml` | GitHub Actions | CodeQL code scanning, Gitleaks secret scan, Dependabot alerts |
 
 ## Azure Services
 

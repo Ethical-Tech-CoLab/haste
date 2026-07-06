@@ -2,12 +2,12 @@
 
 HASTE environments are configured with the Azure Developer CLI. Every setting is
 supplied with `azd env set <NAME> <value>` **before** `azd up`; the values are
-read by [`infra/main.bicepparam`](../infra/main.bicepparam) at provision time and
-by the deploy hooks in [`deploy/`](../deploy). Defaults live in
+read by [`infra/main.bicepparam`](https://github.com/microsoft/haste/blob/main/infra/main.bicepparam) at provision time and
+by the deploy hooks in [`deploy/`](https://github.com/microsoft/haste/tree/main/deploy). Defaults live in
 `main.bicepparam`, so an unset variable falls back to a sensible value.
 
 This guide documents each configuration mode. For the end-to-end workflow, see
-[`setup/README.md`](../setup/README.md) and [`deployment.md`](deployment.md).
+[`setup/README.md`](https://github.com/microsoft/haste/blob/main/setup/README.md) and [`deployment.md`](deployment.md).
 
 ## Contents
 
@@ -49,7 +49,7 @@ shared resource group.
 | `HASTE_EXISTING_BATCH_POOL_ID` | — | pool resource id | Required when the pool mode is `Existing`. |
 
 Additional pool parameters (`batchPoolVmSize`, `batchPoolMaxNodes`,
-`batchPoolSubnetName`) have defaults in [`infra/main.bicep`](../infra/main.bicep)
+`batchPoolSubnetName`) have defaults in [`infra/main.bicep`](https://github.com/microsoft/haste/blob/main/infra/main.bicep)
 and can be overridden by adding them to `main.bicepparam`.
 
 Common combinations:
@@ -92,7 +92,7 @@ pool's image tags after creation. Two consequences:
   settings still need a valid tag.
 
 To make this transparent, the `preprovision` hook
-[`deploy/resolve-batch-image-tags.ps1`](../deploy/resolve-batch-image-tags.ps1)
+[`deploy/resolve-batch-image-tags.ps1`](https://github.com/microsoft/haste/blob/main/deploy/resolve-batch-image-tags.ps1)
 reads the existing pool's `containerImageNames` and sets `HASTE_TRAINING_IMAGE` /
 `HASTE_IMAGERYPREP_IMAGE` for you when `HASTE_BATCH_POOL_MODE=Existing`. It runs
 only in that mode and never clobbers a tag you set explicitly — set either
@@ -153,9 +153,9 @@ postdeploy hooks solve it by seeding a first admin.
 
 - **Interactive deploys** — if `HASTE_FIRST_ADMIN_EMAIL` is unset, the seed uses
   the signed-in deployer's email
-  ([`deploy/seed-storage-defaults.ps1`](../deploy/seed-storage-defaults.ps1)),
+  ([`deploy/seed-storage-defaults.ps1`](https://github.com/microsoft/haste/blob/main/deploy/seed-storage-defaults.ps1)),
   writes it into `users_acl.json` as an administrator, and invites it to the
-  Static Web App ([`deploy/invite-user.ps1`](../deploy/invite-user.ps1)).
+  Static Web App ([`deploy/invite-user.ps1`](https://github.com/microsoft/haste/blob/main/deploy/invite-user.ps1)).
 - **Non-interactive / CI / service-principal deploys** — there is no signed-in
   user, so **set `HASTE_FIRST_ADMIN_EMAIL`**. Without it, the first-admin seed is
   skipped and the environment has no administrator.
