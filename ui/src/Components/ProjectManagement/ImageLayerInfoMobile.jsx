@@ -66,10 +66,11 @@ const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, se
           </div>
 
           {isBuildingWorkflow ? (
-            <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
+            <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2 d-flex align-items-center">
               <DefaultButton
                 id={"singleProjectEmbed" + item.imageLayerId}
                 className="dashboard-button"
+                styles={{ root: { flexGrow: 1 } }}
                 onClick={handleEmbed}
                 disabled={
                   item.status !== "Processed" || !item.buildingFootprintsUrl
@@ -77,16 +78,17 @@ const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, se
               >
                 Embed
               </DefaultButton>{" "}
-              <Text className="pe-4" variant="small">
+              <Text className="ps-2" variant="small">
                 ({embeddingModels.length})
               </Text>
             </div>
           ) : (
             <>
-              <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
+              <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2 d-flex align-items-center">
                 <DefaultButton
                   id={"singleProjectLabelingToolLaunch" + item.imageLayerId}
                   className="dashboard-button"
+                  styles={{ root: { flexGrow: 1 } }}
                   onClick={() =>
                     navigate(`/labeling-tool/${item.projectId}/${item.imageLayerId}`)
                   }
@@ -94,15 +96,16 @@ const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, se
                 >
                   Launch Labeling Tool
                 </DefaultButton>{" "}
-                <Text className="pe-4" variant="small">
+                <Text className="ps-2" variant="small">
                   ({item.labelProjectCount})
                 </Text>
               </div>
 
-              <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
+              <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2 d-flex align-items-center">
                 <DefaultButton
                   id={"singleProjectModelTraining" + item.imageLayerId}
                   className="dashboard-button"
+                  styles={{ root: { flexGrow: 1 } }}
                   onClick={() =>
                     setModalComponent(
                       <CreateEditModelTrainingModal
@@ -120,12 +123,29 @@ const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, se
                 >
                   Train Model
                 </DefaultButton>{" "}
-                <Text className="pe-4" variant="small">
+                <Text className="ps-2" variant="small">
                   ({item.models && item.models.length > 0 ? item.models.length : 0})
                 </Text>
               </div>
             </>
           )}
+
+          <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2 d-flex align-items-center">
+            <DefaultButton
+              id={"singleProjectBuildingValidation" + item.imageLayerId}
+              className="dashboard-button"
+              styles={{ root: { flexGrow: 1 } }}
+              onClick={() =>
+                navigate(`/validation/${item.projectId}/${item.imageLayerId}`)
+              }
+              disabled={!item.buildingFootprintsUrl}
+            >
+              Launch Validation Tool
+            </DefaultButton>{" "}
+            <Text className="ps-2" variant="small">
+              ({item.validationLabelCount || 0})
+            </Text>
+          </div>
         </td>
       </tr>
     </React.Fragment >
