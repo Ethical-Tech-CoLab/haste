@@ -230,32 +230,28 @@ const EmbeddingModelRow = ({
         </tr>
         <tr>
           <td className="pb-2 pt-2">
-            <DefaultButton
-              id={"interactiveLabel" + index}
-              className="dashboard-button"
-              styles={{ root: { width: "100%" } }}
-              onClick={() =>
-                navigate(
-                  `/interactive-label/${projectId}/${imageLayerId}/${model.modelId}`
-                )
-              }
-              disabled={!isProcessed}
-            >
-              Interactive Label
-            </DefaultButton>
-          </td>
-        </tr>
-        <tr>
-          <td className="pb-2">
-            <PrimaryButton
-              id={"embeddingReports" + index}
-              text="Reports"
-              menuProps={reportsMenu}
-              allowDisabledFocus
-              className="dashboard-button"
-              styles={{ root: { width: "100%" } }}
-              disabled={!hasPredictions}
-            />
+            <div className="d-flex align-items-center">
+              <DefaultButton
+                id={"interactiveLabel" + index}
+                className="dashboard-button"
+                onClick={() =>
+                  navigate(
+                    `/interactive-label/${projectId}/${imageLayerId}/${model.modelId}`
+                  )
+                }
+                disabled={!isProcessed}
+              >
+                Interactive Label
+              </DefaultButton>
+              <PrimaryButton
+                id={"embeddingReports" + index}
+                text="Reports"
+                menuProps={reportsMenu}
+                allowDisabledFocus
+                className="dashboard-button ms-2"
+                disabled={!hasPredictions}
+              />
+            </div>
           </td>
         </tr>
         <tr className="model-mobile-row">
