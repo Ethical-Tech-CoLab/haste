@@ -135,8 +135,7 @@ share the result.
 
 ### Download the outputs
 
-- **Download Geopackage (`.gpkg`)** — the predicted damage layer, for ArcGIS, QGIS, and other
-  geospatial tools.
+- **Download Geopackage (`.gpkg`)** — the predicted damage layer.
 - **Download Training Artifacts** — the training outputs (saved labels, checkpoints, logs).
 - **Download Inference Artifacts** — the inference outputs (predictions and building
   footprints).
