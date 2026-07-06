@@ -66,46 +66,46 @@ const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, se
           </div>
 
           {isBuildingWorkflow ? (
-            <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2 d-flex align-items-center">
+            <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
               <DefaultButton
                 id={"singleProjectEmbed" + item.imageLayerId}
                 className="dashboard-button"
-                styles={{ root: { flexGrow: 1 } }}
+                styles={{ root: { width: "100%" } }}
                 onClick={handleEmbed}
                 disabled={
                   item.status !== "Processed" || !item.buildingFootprintsUrl
                 }
               >
                 Embed
-              </DefaultButton>{" "}
-              <Text className="ps-2" variant="small">
-                ({embeddingModels.length})
+              </DefaultButton>
+              <Text className="d-block pt-1" variant="small">
+                Embeddings: {embeddingModels.length}
               </Text>
             </div>
           ) : (
             <>
-              <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2 d-flex align-items-center">
+              <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
                 <DefaultButton
                   id={"singleProjectLabelingToolLaunch" + item.imageLayerId}
                   className="dashboard-button"
-                  styles={{ root: { flexGrow: 1 } }}
+                  styles={{ root: { width: "100%" } }}
                   onClick={() =>
                     navigate(`/labeling-tool/${item.projectId}/${item.imageLayerId}`)
                   }
                   disabled={item.status !== "Processed"}
                 >
                   Launch Labeling Tool
-                </DefaultButton>{" "}
-                <Text className="ps-2" variant="small">
-                  ({item.labelProjectCount})
+                </DefaultButton>
+                <Text className="d-block pt-1" variant="small">
+                  Label projects: {item.labelProjectCount}
                 </Text>
               </div>
 
-              <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2 d-flex align-items-center">
+              <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
                 <DefaultButton
                   id={"singleProjectModelTraining" + item.imageLayerId}
                   className="dashboard-button"
-                  styles={{ root: { flexGrow: 1 } }}
+                  styles={{ root: { width: "100%" } }}
                   onClick={() =>
                     setModalComponent(
                       <CreateEditModelTrainingModal
@@ -122,28 +122,28 @@ const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, se
                   disabled={item.status !== "Processed" || item.labelProjectCount < 1}
                 >
                   Train Model
-                </DefaultButton>{" "}
-                <Text className="ps-2" variant="small">
-                  ({item.models && item.models.length > 0 ? item.models.length : 0})
+                </DefaultButton>
+                <Text className="d-block pt-1" variant="small">
+                  Models: {item.models && item.models.length > 0 ? item.models.length : 0}
                 </Text>
               </div>
             </>
           )}
 
-          <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2 d-flex align-items-center">
+          <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
             <DefaultButton
               id={"singleProjectBuildingValidation" + item.imageLayerId}
               className="dashboard-button"
-              styles={{ root: { flexGrow: 1 } }}
+              styles={{ root: { width: "100%" } }}
               onClick={() =>
                 navigate(`/validation/${item.projectId}/${item.imageLayerId}`)
               }
               disabled={!item.buildingFootprintsUrl}
             >
               Launch Validation Tool
-            </DefaultButton>{" "}
-            <Text className="ps-2" variant="small">
-              ({item.validationLabelCount || 0})
+            </DefaultButton>
+            <Text className="d-block pt-1" variant="small">
+              Validation labels: {item.validationLabelCount || 0}
             </Text>
           </div>
         </td>
