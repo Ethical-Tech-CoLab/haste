@@ -79,18 +79,18 @@ Source for the docs lives in [`docs/`](docs/) and is built with [Jupyter Book](h
        │ /api/*                                     │ tile requests
 ┌──────▼──────────────┐                    ┌────────▼─────────────┐
 │   hastefuncapi       │                    │   titilerfuncapi     │
-│   (28 HTTP routes)   │                    │   (TiTiler/FastAPI)  │
+│   (41 HTTP routes)   │                    │   (TiTiler/FastAPI)  │
 │   Azure Functions    │                    │   COG tile serving   │
 └──────┬──────────────┘                    └──────────────────────┘
        │ Queue messages
 ┌──────▼──────────────┐
 │   hastefuncqueues    │
-│   (6 queue triggers) │
+│   (7 queue triggers) │
 │   Azure Functions    │
 └──────┬──────────────┘
        │
 ┌──────▼──────────────────────────────────────────────────────────┐
-│                    haste core library                             │
+│                    hastegeo core library                          │
 │  Config · Models · Processors · Data Layers · Runners · Utils    │
 └──────┬───────────┬───────────┬───────────┬──────────────────────┘
        │           │           │           │
@@ -109,7 +109,7 @@ Source for the docs lives in [`docs/`](docs/) and is built with [Jupyter Book](h
 | **REST API** (`hastefuncapi`) | Python Azure Functions | HTTP endpoints for CRUD operations |
 | **Queue Workers** (`hastefuncqueues`) | Python Azure Functions | Queue-triggered functions for async processing |
 | **Tile Server** (`titilerfuncapi`) | TiTiler + FastAPI | Cloud Optimized GeoTIFF tile serving |
-| **Core Library** (`haste`) | Python package | Shared models, processors, data layers, and utilities |
+| **Core Library** (`hastegeo`) | Python package | Shared models, processors, data layers, and utilities |
 
 ## Contributing
 

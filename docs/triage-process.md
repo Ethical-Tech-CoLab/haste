@@ -99,7 +99,7 @@ Root Cause C).
 
 - **Critical** severity or evidence of active exploitation in the wild → notify MSRC and project lead immediately; assume incident-response cadence rather than the table above.
 - Cannot remediate within the SLA window → open a tracking issue, document the blocker (upstream not patched, breaking-change cost, etc.), and obtain explicit risk-acceptance sign-off recorded on the issue.
-- Disagreement on disposition → escalate to the security review team contact (currently Pedro Enriquez's team, per the 2026-05-01 review).
+- Disagreement on disposition → escalate to the security review team contact (the HASTE maintainers).
 
 ## Records
 

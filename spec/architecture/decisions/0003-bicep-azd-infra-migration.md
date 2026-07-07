@@ -9,14 +9,14 @@
 HASTE infrastructure is currently provisioned and deployed by two large bash
 scripts in `setup/`:
 
-- [`setup/setup_infra.sh`](../../../setup/setup_infra.sh) — ~1,420 lines that
+- `setup/setup_infra.sh` — ~1,420 lines that
   create every Azure resource (resource group, user-assigned identity,
   storage accounts, VNet/subnets/NSG, Log Analytics, APIM, three Flex
   Consumption Function Apps, Azure Batch pool, Maps, Static Web App, optional
   Front Door + WAF), then deploy the Function Apps and Static Web App,
   register APIM APIs/backends/operations/policies, set CORS, upload admin
   settings, and create the first user invitation.
-- [`setup/deploy_apps.sh`](../../../setup/deploy_apps.sh) — ~250 lines that
+- `setup/deploy_apps.sh` — ~250 lines that
   re-declare much of the same configuration to redeploy app code outside the
   pipeline.
 

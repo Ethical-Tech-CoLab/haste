@@ -1,7 +1,7 @@
 # Feature: Infrastructure as Code Migration (Bicep + azd)
 
 **Status:** implemented
-**Author:** memachado
+**Author:** HASTE engineering team
 **Date:** 2026-06-25
 **Target Release:** TBD
 **Priority:** P1
