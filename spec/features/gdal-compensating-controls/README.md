@@ -1,7 +1,7 @@
 # Feature: GDAL Deferral Compensating Controls
 
 **Status:** approved
-**Author:** @jQuinRivero
+**Author:** HASTE engineering team
 **Date:** 2026-06-26
 **Target Release:** next
 **Priority:** P1
@@ -30,7 +30,7 @@ weekly exception review.
   Identity tokens with Blob/Data Lake access.
 - **Who requested it:** Security triage (`docs/security-triage-2026-06-23.md`)
   escalated the GDAL CVEs above their Dependabot "Low" rating and required
-  compensating controls; owner @jQuinRivero asked to implement them.
+  compensating controls, and the HASTE engineering team implemented them.
 - **If we don't build it:** the deferral is undocumented-in-practice — the
   controls are written down but not enforced, leaving the HIGH-severity
   HDF4/EOS code path reachable from untrusted input.
@@ -64,7 +64,7 @@ weekly exception review.
 
 | Spec | Relationship |
 |---|---|
-| [ADR 0003 — GDAL driver allowlist](../../architecture/decisions/0003-gdal-driver-allowlist.md) | records the allowlist-vs-denylist decision |
+| [ADR 0004 — GDAL driver allowlist](../../architecture/decisions/0004-gdal-driver-allowlist.md) | records the allowlist-vs-denylist decision |
 
 ## Document Index
 

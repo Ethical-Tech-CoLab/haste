@@ -4,7 +4,7 @@
 
 Compensating controls for the deferred GDAL 3.9.2 dependency exception
 (see ``docs/known-vulnerabilities.md`` Root Cause C and
-``spec/architecture/decisions/0003-gdal-driver-allowlist.md``).
+``spec/architecture/decisions/0004-gdal-driver-allowlist.md``).
 
 GDAL 3.9.2 carries unpatched memory-safety CVEs, the worst a heap overflow
 in the HDF4/HDF-EOS driver (CVE-2026-8087). Because GDAL dispatches by

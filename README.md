@@ -33,7 +33,7 @@ docker compose -f docker/docker-compose.yml up
 
 > **Note:** The Docker Compose stack is for local development and evaluation only. It uses development defaults (in-memory storage emulator, disabled auth, wildcard CORS) that are not suitable for production.
 
-> For Azure-connected development and production deployment, see [Project Setup](#project-setup) below and the [full documentation](https://microsoft.github.io/haste).
+> For Azure-connected development and production deployment, see the [Documentation](#documentation) section below and the [full online docs](https://microsoft.github.io/haste).
 
 ### See it in action
 
@@ -48,7 +48,7 @@ Full documentation is published at **[https://microsoft.github.io/haste](https:/
 - [User Guide](https://microsoft.github.io/haste/usage/overview.html) — how to use the application end to end
 - [Local Development](https://microsoft.github.io/haste/setup/local-dev.html)
 - [Configuration Guide](https://microsoft.github.io/haste/configuration.html)
-- Production Setup - [Deployment Guide](https://microsoft.github.io/haste/deployment.html) * [Secure Configuration Guidance](https://microsoft.github.io/haste/security-configuration.html)
+- Production Setup - [Deployment Guide](https://microsoft.github.io/haste/deployment.html) and [Secure Configuration Guidance](https://microsoft.github.io/haste/security-configuration.html)
 - [Architecture](https://microsoft.github.io/haste/architecture.html)
 - [API Reference](https://microsoft.github.io/haste/api/modules.html)
 
@@ -68,18 +68,18 @@ Source for the docs lives in [`docs/`](docs/) and is built with [Jupyter Book](h
        │ /api/*                                     │ tile requests
 ┌──────▼──────────────┐                    ┌────────▼─────────────┐
 │   hastefuncapi       │                    │   titilerfuncapi     │
-│   (28 HTTP routes)   │                    │   (TiTiler/FastAPI)  │
+│   (41 HTTP routes)   │                    │   (TiTiler/FastAPI)  │
 │   Azure Functions    │                    │   COG tile serving   │
 └──────┬──────────────┘                    └──────────────────────┘
        │ Queue messages
 ┌──────▼──────────────┐
 │   hastefuncqueues    │
-│   (6 queue triggers) │
+│   (7 queue triggers) │
 │   Azure Functions    │
 └──────┬──────────────┘
        │
 ┌──────▼──────────────────────────────────────────────────────────┐
-│                    haste core library                             │
+│                    hastegeo core library                          │
 │  Config · Models · Processors · Data Layers · Runners · Utils    │
 └──────┬───────────┬───────────┬───────────┬──────────────────────┘
        │           │           │           │
@@ -98,7 +98,7 @@ Source for the docs lives in [`docs/`](docs/) and is built with [Jupyter Book](h
 | **REST API** (`hastefuncapi`) | Python Azure Functions | HTTP endpoints for CRUD operations |
 | **Queue Workers** (`hastefuncqueues`) | Python Azure Functions | Queue-triggered functions for async processing |
 | **Tile Server** (`titilerfuncapi`) | TiTiler + FastAPI | Cloud Optimized GeoTIFF tile serving |
-| **Core Library** (`haste`) | Python package | Shared models, processors, data layers, and utilities |
+| **Core Library** (`hastegeo`) | Python package | Shared models, processors, data layers, and utilities |
 
 ## Contributing
 

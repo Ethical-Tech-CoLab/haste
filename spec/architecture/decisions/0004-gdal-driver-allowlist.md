@@ -1,8 +1,8 @@
-# ADR-0003: Restrict GDAL/OGR to a driver allowlist for untrusted imagery
+# ADR-0004: Restrict GDAL/OGR to a driver allowlist for untrusted imagery
 
 **Status:** accepted
 **Date:** 2026-06-26
-**Deciders:** @jQuinRivero
+**Deciders:** HASTE engineering team
 
 ## Context
 
