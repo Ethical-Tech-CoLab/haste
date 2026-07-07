@@ -18,13 +18,40 @@ upload them all together and HASTE will combine them into a single mosaic.
 There are multiple providers of satellite imagery for damage assessment, including but
 not limited to the following:
 
-- Maxar Open Data Program — <https://vantor.com/company/open-data-program/>
-- PlanetScope — <https://developers.planet.com/docs/data/planetscope>
-- SkySat — <https://developers.planet.com/docs/data/skysat>
+- Vantor Open Data Program — <https://vantor.com/company/open-data-program//>
+- Planet Scope — <https://developers.planet.com/docs/data/planetscope>
+- Planet Skysat — <https://developers.planet.com/docs/data/skysat>
 
 ### Formats
 
 At the moment, HASTE only accepts TIFF (`.tif`) files as valid imagery formats.
+
+## Sample data to try HASTE
+
+Want to try HASTE without sourcing your own imagery first? The Microsoft AI for Good Lab
+hosts a few public post-disaster samples you can drop straight into an image layer.
+
+| Dataset | File | Use as | Best for |
+|---------|------|--------|----------|
+| **Black River** (Planet) | [`black-river_visual_mosaic_cog.tif`](https://opendata.aiforgood.ai/damage-assessment/demo-data/black-river_visual_mosaic_cog.tif) | Post-event imagery | Either workflow |
+| **Black River** (Planet) | [`black-river_footprints.gpkg`](https://opendata.aiforgood.ai/damage-assessment/demo-data/black-river_footprints.gpkg) | Custom building footprints | Rapid Building Assessment |
+| **Lahaina, Maui** — Vantor / Maxar, 12 Aug 2023 | [`maxar_lahaina_8_12_2023-visual.tif`](https://opendata.aiforgood.ai/damage-assessment/demo-data/maxar_lahaina_8_12_2023-visual.tif) | Post-event imagery | Damage Mapping (train a model) |
+
+**How to use them**
+
+- **Imagery** — on the Create Image Layer form, paste the `.tif` URL into the post-event
+  imagery URL field, or download it and upload the file. (These samples are post-event only;
+  pre-event imagery is optional in both workflows.)
+- **Footprints** — download the `.gpkg` and upload it under **Custom Building Footprints**
+  (the URL option requires Azure Blob Storage or S3 hosting). Footprints are only needed for
+  the **Building** workflow; the **Standard** workflow doesn't require them.
+
+```{note}
+The **Black River** set pairs post-event imagery with matching building footprints, so it's a
+complete example for {doc}`Rapid Building Assessment <rapid-building-assessment>`. The
+**Lahaina** scene is imagery only — a good fit for {doc}`Damage Mapping <damage-mapping>`,
+where footprints are pulled automatically from Overture Maps.
+```
 
 ## Create a New Image Layer
 

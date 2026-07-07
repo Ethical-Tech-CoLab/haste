@@ -24,6 +24,15 @@ the results.
 Create a project and add a **Standard**-workflow image layer with your pre-/post-event
 imagery. See {doc}`Projects <projects>` and {doc}`Image layers <image-layers>`.
 
+```{admonition} Try it with sample data
+:class: tip
+
+New to HASTE? Use the **Lahaina, Maui** sample (Vantor / Maxar post-event imagery) from
+{doc}`Image layers <image-layers>` (see *Sample data to try HASTE*): create a
+**Standard**-workflow layer with `maxar_lahaina_8_12_2023-visual.tif` as the post-event
+imagery. Building footprints download automatically from Overture Maps.
+```
+
 ## Step 1 — Label a training area
 
 Labeling means manually annotating damaged, undamaged, and background areas on a small
