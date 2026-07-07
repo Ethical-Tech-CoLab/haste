@@ -46,7 +46,7 @@ The current decision is to defer upgrade and apply compensating controls until a
 
 These controls are enforced in code — see
 [`spec/features/gdal-compensating-controls/`](../spec/features/gdal-compensating-controls/)
-and [ADR-0003](../spec/architecture/decisions/0003-gdal-driver-allowlist.md).
+and [ADR-0004](../spec/architecture/decisions/0004-gdal-driver-allowlist.md).
 
 - **Authenticated, allowlisted providers/endpoints.** User-supplied imagery
   and footprint URLs are validated against an allowlist

@@ -18,9 +18,9 @@ upload them all together and HASTE will combine them into a single mosaic.
 There are multiple providers of satellite imagery for damage assessment, including but
 not limited to the following:
 
-- Maxar Open Data Program — <https://vantor.com/company/open-data-program//>
-- Planet Scope — <https://developers.planet.com/docs/data/planetscope>
-- Planet Skysat — <https://developers.planet.com/docs/data/skysat>
+- Maxar Open Data Program — <https://vantor.com/company/open-data-program/>
+- PlanetScope — <https://developers.planet.com/docs/data/planetscope>
+- SkySat — <https://developers.planet.com/docs/data/skysat>
 
 ### Formats
 

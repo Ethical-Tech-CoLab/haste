@@ -7,8 +7,8 @@ This directory contains all feature specs, modification proposals, and architect
 | Component | Path | Tech | Description |
 |---|---|---|---|
 | **Core Library** | `hastelib/src/hastegeo/` | Python 3.11+ | Config, models, processors, data layers, runners, utils |
-| **REST API** | `api/hastefuncapi/` | Python Azure Functions | 28 HTTP routes (projects, image layers, models, labels, users, admin) |
-| **Queue Workers** | `api/hastefuncqueues/` | Python Azure Functions | 6 queue triggers for long-running ops (imagery prep, training, inference) |
+| **REST API** | `api/hastefuncapi/` | Python Azure Functions | 41 HTTP routes (projects, image layers, models, labels, users, admin) |
+| **Queue Workers** | `api/hastefuncqueues/` | Python Azure Functions | 7 queue triggers for long-running ops (imagery prep, training, inference) |
 | **Tile Server** | `api/titilerfuncapi/` | TiTiler / FastAPI | COG tile serving |
 | **UI** | `ui/src/` | React / Vite / Fluent UI | Projects, Labeling Tool, Visualizer, Admin, Model Catalog |
 | **Docker Dev** | `docker/` | Docker Compose | Full local stack with Azurite emulator |

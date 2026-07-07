@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-driven framework for rapid disaster assessment using satellite imagery. The repository is published as a **library + reference deployment**: Microsoft operates the public reference deployment, while external consumers integrate the `haste_geo` Python library and may optionally redeploy the full stack (UI + Function Apps + Azure Batch) into their own subscription.
+HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-driven framework for rapid disaster assessment using satellite imagery. The repository is published as a **library + reference deployment**: Microsoft operates the public reference deployment, while external consumers integrate the `hastegeo` Python library and may optionally redeploy the full stack (UI + Function Apps + Azure Batch) into their own subscription.
 
 This guide tells you how to **configure HASTE securely** in your environment. It covers:
 
@@ -34,7 +34,7 @@ HASTE supports three deployment modes. Each has a distinct threat model.
 |------|--------------|------------------|
 | **Local development** (Docker Compose) | Single-developer evaluation only | Disabled auth, wildcard CORS, hardcoded dev keys (Azurite). **Never expose to a network beyond `localhost`.** |
 | **Self-hosted Azure deployment** | Customer running HASTE in their own subscription | Production-grade if configured per this guide. Customer is responsible for SWA auth, Key Vault, RBAC, and infra hardening. |
-| **Library-only integration** | Consuming the `haste_geo` Python package in your own application | You inherit only the library's process-level threat model; deployment-time controls are yours. |
+| **Library-only integration** | Consuming the `hastegeo` Python package in your own application | You inherit only the library's process-level threat model; deployment-time controls are yours. |
 
 **Required disclosure**: The local-development Docker Compose stack (`docker/docker-compose.yml`) mounts `/var/run/docker.sock` into containers to enable a local execution mode. This grants root-equivalent host access and is acceptable **only** on developer workstations. The file header documents this; this guide repeats it because it is the single most consequential local-vs-production gap.
 
@@ -304,7 +304,7 @@ The UI's logout flow validates the `redirectPath` parameter via `sanitizeRedirec
 
 ### 8.8 GDAL driver allowlist and ingestion size/type limits
 
-GDAL `3.9.2` is pinned (no trusted prebuilt pip wheel exists for the patched 3.13 line under HASTE's runtime), so three memory-safety CVEs — most notably **CVE-2026-8087**, a heap overflow in the HDF4/HDF-EOS driver — are deferred under a documented exception with **compensating controls enforced in code** (see [`known-vulnerabilities.md`](https://github.com/microsoft/haste/blob/main/docs/known-vulnerabilities.md) Root Cause C and [ADR-0003](https://github.com/microsoft/haste/blob/main/spec/architecture/decisions/0003-gdal-driver-allowlist.md)).
+GDAL `3.9.2` is pinned (no trusted prebuilt pip wheel exists for the patched 3.13 line under HASTE's runtime), so three memory-safety CVEs — most notably **CVE-2026-8087**, a heap overflow in the HDF4/HDF-EOS driver — are deferred under a documented exception with **compensating controls enforced in code** (see [`known-vulnerabilities.md`](https://github.com/microsoft/haste/blob/main/docs/known-vulnerabilities.md) Root Cause C and [ADR-0004](https://github.com/microsoft/haste/blob/main/spec/architecture/decisions/0004-gdal-driver-allowlist.md)).
 
 - **Driver allowlist.** At process startup `hastegeo.core.utils.gdal_security.harden_gdal()` restricts GDAL/OGR to the drivers HASTE actually uses (raster `GTiff, COG, VRT, JPEG, PNG, MEM`; vector `GPKG, GeoJSON, Memory`) by deregistering every other driver. Because GDAL dispatches by sniffing file *content* (not the extension), this removes the vulnerable HDF4/HDF-EOS code path from every `gdal.Open`/`rasterio.open`/`pyogrio` read in-process. The imageryprep and training containers also set `GDAL_SKIP="HDF4 HDF4Image HDF5 HDF5Image netCDF"` so subprocess GDAL CLI tools (`gdalwarp`/`gdal_translate`) refuse those drivers too.
 - **Ingestion size/type limits.** Chunked uploads are capped (`HASTE_MAX_UPLOAD_BYTES`, default 5 GiB) and the assembled file's magic bytes must match its declared format before GDAL parses it. Remote imagery fetches are capped (`HASTE_MAX_IMAGERY_DOWNLOAD_BYTES`, default 8 GiB) and refuse cross-host redirects (SSRF guard). Defaults are generous because satellite COGs are legitimately large; tune them to your largest expected imagery.

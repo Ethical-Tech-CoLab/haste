@@ -49,7 +49,7 @@
 
 | Milestone | Deliverable |
 |---|---|
-| Spec approved | This spec set + ADR-0003 |
+| Spec approved | This spec set + ADR-0004 |
 | Core hardening done | `gdal_security.py` + wiring + tests |
 | Boundaries done | upload/download checks + tests |
 | Docs + verify | docs updated, suite green, PR opened |

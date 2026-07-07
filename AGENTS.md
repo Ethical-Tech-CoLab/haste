@@ -6,8 +6,9 @@ of project-specific conventions that aren't obvious from the source
 itself.
 
 > **Mirrored at `.github/copilot-instructions.md`.** GitHub Copilot's
-> chat reads that file directly; other tools read this one. Keep them
-> in sync — they should be identical.
+> chat reads that file directly; other tools read this one. Keep the two
+> in sync — they cover the same guidance, though formatting and some
+> sections differ between them.
 
 ---
 

@@ -29,7 +29,8 @@ After building, open `_build/html/index.html` in your browser.
 - `conf.py` - Extra Sphinx configuration (sys.path, mocks for autodoc)
 - `intro.md` - Main landing page
 - `usage/` - User Guide: how to use the application (overview, projects, image layers, labeling, model training, results, model catalog)
-- `setup/` - Setup & Deployment guides (`local-dev.md` for the Docker stack, `production.md` for the one-step azd deployment)
+- `setup/` - Setup guides (`local-dev.md` for the Docker stack)
+- `deployment.md` - One-step azd production deployment guide
 - `security-configuration.md` - Secure configuration guidance
 - `architecture.md` - System architecture overview
 - `api-overview.md` - API overview and reference
