@@ -33,6 +33,15 @@ building-workflow layer shows an **Embed** button once its status is **Processed
 Footprints are sourced automatically from Overture Maps, or you can supply your own — see
 {doc}`Custom building footprints <image-layers>`.
 
+```{admonition} Try it with sample data
+:class: tip
+
+New to HASTE? Use the **Black River** sample from {doc}`Image layers <image-layers>` (see
+*Sample data to try HASTE*): create a **Building**-workflow layer with
+`black-river_visual_mosaic_cog.tif` as the post-event imagery and
+`black-river_footprints.gpkg` as the custom footprints.
+```
+
 ## Step 1 — Embed the buildings
 
 On the image layer, click the **Embed** button:
