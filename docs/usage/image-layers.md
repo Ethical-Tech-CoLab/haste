@@ -18,9 +18,8 @@ upload them all together and HASTE will combine them into a single mosaic.
 There are multiple providers of satellite imagery for damage assessment, including but
 not limited to the following:
 
+- Planet Disaster Data — <https://source.coop/planet/disasterdata>
 - Vantor Open Data Program — <https://vantor.com/company/open-data-program//>
-- Planet Scope — <https://developers.planet.com/docs/data/planetscope>
-- Planet Skysat — <https://developers.planet.com/docs/data/skysat>
 
 ### Formats
 
@@ -47,7 +46,10 @@ hosts a few public post-disaster samples you can drop straight into an image lay
   the **Building** workflow; the **Standard** workflow doesn't require them.
 
 ```{note}
-The **Black River** set pairs post-event imagery with matching building footprints, so it's a
+The **Black River** post-event image (`black-river_visual_mosaic_cog.tif`) is a mosaic of all
+the individual visual assets in
+[Planet's Hurricane Melissa 2025 Black River disaster data](https://source.coop/planet/disasterdata/hurricane-melissa-2025/post-event/black-river).
+This set pairs post-event imagery with matching building footprints, so it's a
 complete example for {doc}`Rapid Building Assessment <rapid-building-assessment>`. The
 **Lahaina** scene is imagery only — a good fit for {doc}`Damage Mapping <damage-mapping>`,
 where footprints are pulled automatically from Overture Maps.
