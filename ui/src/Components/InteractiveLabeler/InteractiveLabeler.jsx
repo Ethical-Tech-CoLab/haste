@@ -160,6 +160,23 @@ function fillColorExpr(stateKey) {
   ];
 }
 
+// Fill opacity for a labeled/predicted building. Unlabeled buildings (no
+// matching feature-state for stateKey) get a fully transparent fill so only
+// their outline shows.
+const LABELED_FILL_OPACITY = 0.5;
+
+// Build the fillOpacity paint expression for a given feature-state key,
+// mirroring fillColorExpr so opacity tracks the same "label"/"pred" state.
+function fillOpacityExpr(stateKey) {
+  return [
+    "case",
+    ["==", ["feature-state", stateKey], CLASS_INTACT], LABELED_FILL_OPACITY,
+    ["==", ["feature-state", stateKey], CLASS_DAMAGED], LABELED_FILL_OPACITY,
+    ["==", ["feature-state", stateKey], CLASS_CLOUDY], LABELED_FILL_OPACITY,
+    0,
+  ];
+}
+
 // Binary HFTR sidecar:
 //   bytes  0-3  : magic "HFTR"
 //   bytes  4-7  : u32 LE  version (currently 1)
@@ -515,7 +532,7 @@ const InteractiveLabeler = () => {
         {
           sourceLayer: PMTILES_SOURCE_LAYER,
           fillColor: fillColorExpr("label"),
-          fillOpacity: 0.5,
+          fillOpacity: fillOpacityExpr("label"),
         }
       );
       map.layers.add(fillLayer);
@@ -525,10 +542,10 @@ const InteractiveLabeler = () => {
           sourceLayer: PMTILES_SOURCE_LAYER,
           strokeColor: "#1a5276",
           // Outlines are noise when zoomed out: hide them below z15, draw
-          // them very thin in the z15-16 transition, and use the full
-          // width once the user is zoomed in past z16.
+          // them thin in the z15-16 transition, and use the full width once
+          // the user is zoomed in past z16.
           minZoom: 15,
-          strokeWidth: ["step", ["zoom"], 0.5, 16, 1],
+          strokeWidth: ["step", ["zoom"], 1, 16, 2],
         })
       );
 
@@ -766,8 +783,9 @@ const InteractiveLabeler = () => {
   }
 
   // ── Repaint when the view-mode toggle flips ───────────────────────────────
-  // We don't recreate the layer — we mutate its fillColor expression so
-  // the renderer reads the right feature-state key without re-tessellating.
+  // We don't recreate the layer — we mutate its fillColor/fillOpacity
+  // expressions so the renderer reads the right feature-state key without
+  // re-tessellating.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -775,6 +793,7 @@ const InteractiveLabeler = () => {
     if (!fill) return;
     fill.setOptions({
       fillColor: fillColorExpr(viewMode === "predict" ? "pred" : "label"),
+      fillOpacity: fillOpacityExpr(viewMode === "predict" ? "pred" : "label"),
     });
     if (viewMode === "predict") hydrateViewport(map);
   }, [viewMode, isMapReady]);
