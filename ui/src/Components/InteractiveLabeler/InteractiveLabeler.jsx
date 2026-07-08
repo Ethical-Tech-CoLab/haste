@@ -542,10 +542,10 @@ const InteractiveLabeler = () => {
           sourceLayer: PMTILES_SOURCE_LAYER,
           strokeColor: "#1a5276",
           // Outlines are noise when zoomed out: hide them below z15, draw
-          // them very thin in the z15-16 transition, and use the full
-          // width once the user is zoomed in past z16.
+          // them thin in the z15-16 transition, and use the full width once
+          // the user is zoomed in past z16.
           minZoom: 15,
-          strokeWidth: ["step", ["zoom"], 0.5, 16, 1],
+          strokeWidth: ["step", ["zoom"], 1, 16, 2],
         })
       );
 
