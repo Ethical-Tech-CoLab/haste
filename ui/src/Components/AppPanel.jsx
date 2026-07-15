@@ -99,9 +99,21 @@ const AppPanel = ({ setModalComponent, hideHamburgerMenu }) => {
               </Link>
               <Link
                 className="p-2 m-0 pt-1 pb-1"
-                onClick={() => handleNavigate("/projects")} 
+                onClick={() => handleNavigate("/projects")}
               >
                 Projects
+              </Link>
+              <Link
+                className="p-2 m-0 pt-1 pb-1"
+                onClick={() => handleNavigate("/about")}
+              >
+                About
+              </Link>
+              <Link
+                className="p-2 m-0 pt-1 pb-1"
+                onClick={() => handleNavigate("/resources")}
+              >
+                Resources
               </Link>
             </div>
 

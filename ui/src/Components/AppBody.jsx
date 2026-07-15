@@ -20,6 +20,8 @@ import AdminSourceTypes from "./AdminSourceTypes";
 import AdminLabelingTool from "./AdminLabelingTool";
 import CreateEditImageLayerForm from "./CreateEditImageLayerForm";
 import HelpDocs from "./HelpDocs";
+import AboutPage from "./AboutPage";
+import ResourcesPage from "./ResourcesPage";
 import { apiValidateUser, apiLogout } from "../util/api";
 import PropType from "prop-types";
 
@@ -43,6 +45,8 @@ const AppBody = ({ setModalComponent }) => {
               <Route path="/" element={<Home />} />
 
               <Route path="/projects" element={<Projects />} />
+              <Route path="/about" element={<AboutPage />} />
+              <Route path="/resources" element={<ResourcesPage />} />
               <Route path="/project/:projectId" element={<Project setModalComponent={setModalComponent} />} />
               <Route path="/project/:projectId/:imageLayerId" element={<Project setModalComponent={setModalComponent} />} />
               <Route
