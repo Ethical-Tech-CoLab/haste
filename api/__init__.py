@@ -1,1 +1,0 @@
-# HASTE Function API module
