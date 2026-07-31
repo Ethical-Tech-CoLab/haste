@@ -1,63 +1,126 @@
-# Peer Review — HASTE: High-speed Assessment and Satellite Tracking for Emergencies (Rapid Post-Disaster Building Damage Assessment)
+# Peer Review: HASTE — High-speed Assessment and Satellite Tracking for Emergencies (Rapid Post-Disaster Building Damage Assessment)
 
-**Reviewed as:** Referee for a plain-language research report / technical explainer prepared under the Ethical Tech CoLab (NYU Center for Global Affairs). The bar applied is that of a strong explainer venue: the software design is Microsoft's and out of scope; what is under review is the report's exposition, framing, and intellectual honesty.
+**Status:** Current review of record. This document supersedes the full referee report of 22 July 2026 and the copyediting review of 30 July 2026, both of which are now closed. Their findings are carried below with what was done about each. The superseded documents remain in this repository's git history.
 
-**Reviewer role:** External peer reviewer
+**Reviewed as:** Referee and copy editor for a plain-language research report prepared under the Ethical Tech CoLab (NYU Center for Global Affairs). The software is Microsoft's and out of scope; what is under review is the report's exposition, framing, and intellectual honesty.
 
-**Recommendation:** Minor revisions
+**Text of record:** `src/content/publications/haste.ts` in `Ethical-Tech-CoLab/website`, which is the source of truth for the report. `HASTE-Paper.md` in this repository is generated from it via `npm run export:haste-paper`.
 
-**Date:** 22 July 2026
+**Last updated:** 31 July 2026
+
+**Overall assessment:** Both rounds of findings have been applied. The report is materially more honest than it was in draft (it now names the provenance of its evidence, defines its headline metric, and positions itself against the right literature) and roughly a fifth shorter, with the repetition that diluted it removed. It is publishable as it stands. What remains is a short list of open items, none of which blocks publication, and one of which is a verification the author must do rather than the reviewer.
 
 ---
 
-## Summary of the submission
+## Summary of the text
 
-This report is a non-technical exposition of HASTE, an open-source rapid post-disaster building damage-assessment platform built by the Microsoft AI for Good Lab and reviewed here in the CoLab's fork. The report's stated purpose is to explain, for a humanitarian and research audience, what the platform does, what every one of its adjustable and hardcoded settings means, and what it cannot be trusted to do.
+A non-technical exposition of HASTE, an open-source rapid post-disaster building damage assessment platform built by the Microsoft AI for Good Lab. Fifteen numbered sections take the reader from the humanitarian problem (§00 to §02), through the two-route workflow (§04), a parameter-by-parameter account of every adjustable and hardcoded setting (§05), how to read the outputs (§06), the data the platform depends on (§07), the developer-reported evidence (§08), governance (§09), limitations (§10), deployment, audience, an application to the CoLab's own Mariupol work (§13), and the conclusion (§14).
 
-The genuine contribution is threefold. First, it renders a genuinely complex machine-learning pipeline (embeddings, in-browser logistic regression, U-Net segmentation, finite-population survey estimation) into ordinary language without dumbing it down, which is hard and rarely done well. Second, §05 ("The Variables, Explained Simply") is an unusually complete and disciplined parameter-by-parameter account that would let a non-programmer understand the levers that actually move the answer. Third, and most valuably, the report does not stop at the vendor's own documentation: it reads the source code and surfaces concrete failure modes the developers did not advertise (the epochs inconsistency, positional class fragility, the binary-column-versus-threshold discrepancy, the absence of a genuinely held-out validation set in the trained-model route). That is real reviewing labour applied on the reader's behalf, and it is what lifts this above a marketing summary. The framing throughout — that HASTE reallocates labour toward scarce human judgment rather than automating it away — is coherent and honestly argued.
+Its argument is that HASTE's contribution is a reallocation of labour rather than a modelling advance, and that its ceiling is set by imagery resolution and building-outline coverage rather than by the software.
 
-## Major issues
+## Strengths, which the revisions preserved
 
-**1. The single most important quantitative metric is never defined. [§08 and the hero stat band]** The headline evidence for the fast route is a "discrimination score" of 0.84 from one per cent of labels against 0.88 fully supervised, and this number is elevated into the four-figure stat band at the top of the report. Yet the report never says what a "discrimination score" is. A scanning reader — the exact audience the report targets — cannot tell whether 0.84 is an AUROC, an accuracy, an F1, or something else, nor what scale it lives on or what counts as good. Because this is the load-bearing number for the platform's central practical claim, leaving it undefined undercuts the report's own standard of clarity. *Why it matters:* the report elsewhere is scrupulous about defining precision, recall, damage fraction, and the confidence interval; the one metric promoted to the masthead is the one left unexplained. *Path forward:* name the metric (state explicitly if it is area under the ROC curve), give it one plain-language sentence ("the probability that the model ranks a randomly chosen damaged building above a randomly chosen intact one"), and state its range and chance baseline so 0.84 is legible.
+1. **The explanatory idiom survived the compression, which was the risk.** "An embedding is a compact list of numbers that describes what the imagery around that building looks like: its texture, its colour, its edges." (§04) The de-duplication pass kept the best-written instance of each repeated claim rather than the first, so nothing of this quality was lost to the cuts.
 
-**2. §08 is titled "Evidence of Performance" but mixes validated accuracy with mere deployment counts, and the stat band spins the one number that is below baseline. [§08; stats array; thesis]** The section presents "thirty-one field deployments," a Maui assessment "identifying roughly 1,700 damaged buildings," and Türkiye cities assessed within three days as if they were performance evidence, when most carry no accuracy figures at all — they are evidence of *use*, not of *correctness*. Separately, the report's own table shows the 1-per-cent-label discrimination score (0.84) is *below* the fully supervised baseline (0.88); it only overtakes it at 10 per cent labels (0.91). The stat band and the surrounding prose ("a handful of labels ... can match a conventionally trained model") frame 0.84-vs-0.88 as near-parity, which is a favourable reading of a number that is actually a modest deficit. *Why it matters:* an explainer that is otherwise rigorous about the measured-versus-concluded gap should not itself blur usage with validation or round a deficit up to "match." *Path forward:* split §08 into "Validated accuracy" (xBD; the Rolling Fork and Melissa precision/recall figures) and "Deployment record" (the counts and dates, clearly labelled as adoption not accuracy); and adjust the stat-band gloss so it states plainly that near-baseline performance is reached at roughly 10 per cent of labels, with 1 per cent trading some accuracy for speed.
+2. **Concrete nouns over abstraction.** "Which roads lead to places that no longer exist?" (§00). "It is taught not to claim to see through weather." (§05). "Debris and scorch marks sit there rather than on the roof." (§05).
 
-**3. The "gap" is framed against only two comparators, omitting the machine-learning damage-assessment literature the report itself relies on. [§02, "The gap"]** The prior art engaged is Copernicus EMS Rapid Mapping and manual aerial surveys. But the report benchmarks HASTE on xBD — the dataset created for the xView2 building-damage challenge, which spawned a substantial body of automated damage-classification work. That literature is the nearest neighbour to HASTE and is absent from the positioning, so the gap ("nothing delivers inside seventy-two hours") reads as manufactured by omitting the field HASTE actually sits in. *Why it matters:* positioning a tool only against slow official products makes it look more novel than it is; the interesting and honest claim is not "nothing existed" but "existing ML approaches assumed a global pretrained model, and HASTE trades that for a disposable per-event model an analyst can fit without code." *Path forward:* add two or three sentences in §02 acknowledging the xView2/xBD line of work as the real comparator and stating precisely what HASTE does differently (per-event, no-code, human-labelled), rather than implying an empty field.
+3. **§05 remains the report's centrepiece** and is now better organised: three settings that were buried inside other entries have their own labelled leads, and two colliding entry names have been separated.
 
-**4. The report never states its own strongest structural limitation: every performance claim is self-reported by the developer. [§08, §13, and Limitations §10]** The report is admirably honest about HASTE's *technical* limits, but it does not name the epistemic one that a skeptical referee would seize on first — namely that the xBD results, the deployment record, and the field precision/recall figures all originate from the Microsoft paper and repository, and none has been independently reproduced or externally validated in this report. The recurring hedge "according to the research paper published alongside the platform" gestures at this but never states it as a limitation the reader should weigh. *Why it matters:* the report's credibility rests on its honesty, and the one caveat missing from an otherwise thorough limitations section is the provenance of the evidence itself. *Path forward:* add a single explicit sentence — in §08 or as a bullet in §10 — noting that all reported performance figures are developer-supplied and were not independently reproduced for this report, so they should be read as the developer's own account rather than as third-party verification.
+4. **The house style holds throughout.** No em dashes, no dash ranges, no inline bold outside the lead-ins, British spelling. The added §13 follows it too.
 
-## Minor issues
+---
 
-- **m1. [Citations; §08]** The arXiv identifier `arXiv:2607.11838` should be confirmed to resolve to the stated paper. The number parses as a July 2026 submission, which is plausible but current-to-the-week; verify the link is live and the title matches. **[Verification Required]**
-- **m2. [§08 table]** The performance table attributes 0.84 and 0.91 to the "Strongest embedding" without naming whether that is MOSAIKS or DINOv2. Since §05 presents MOSAIKS as the lightweight default, the reader cannot tell whether the headline result was achieved with the default they would actually run. State which embedding produced the reported scores.
-- **m3. [§01 vs §08]** "More than thirty disaster responses" (Executive Summary) and "thirty-one field deployments" (§08) use different nouns for what appears to be the same count. If a response and a deployment differ, define the difference; if not, use one term.
-- **m4. [Thesis and stat band]** The "seventy-two hours" figure appears in the thesis but §00 and §02 speak only of "the first days" and "hours to days." The specific 72-hour window is asserted, never grounded in a source. Either cite the basis for 72 hours or align the thesis with the softer "first days" language used elsewhere.
-- **m5. [§05]** This section is the declared "heart" of the report but runs ~25 labelled entries with no internal grouping. Consider clustering them (imagery preparation / trained-model route / fast route / final estimate) with sub-labels so a reader can navigate rather than read straight through.
-- **m6. [Stat band, "0.1 damage threshold"]** To a reader scanning only the stat band, "0.1 damage threshold ... set low on purpose" is opaque without the §05 explanation that it means one-tenth of a building's visible pixels. A four-word gloss ("one tenth of visible area") would make the stat self-contained.
-- **m7. [§04]** The claim that Overture "covers roughly 2.3 billion buildings worldwide" is stated without citation; if retained as a concrete figure, attribute it.
+## Round one: full referee report (22 July 2026). All four major issues closed.
 
-## Things the report gets right
+**1. The headline metric was never defined. [§08, stat band] — APPLIED.** "Discrimination score" now carries a full gloss: it is named as area under the receiver operating characteristic curve, defined in plain terms ("the probability that the model ranks a randomly chosen damaged building above a randomly chosen intact one"), given its range and chance baseline, and paired with the caveat that ranking well says nothing about where a threshold should sit. The stat band label was cut back to "area under the ROC curve at one per cent of labels, against 0.88 fully supervised (§08)".
 
-Protect these; they are what make the report worth reading.
+**2. §08 mixed validated accuracy with deployment counts, and the stat band spun a deficit as parity. [§08] — APPLIED.** §08 is now split under "Validated accuracy" and "Deployment record", the latter opening with the statement that the figures which follow are evidence of adoption rather than correctness. The prose no longer says a handful of labels can "match" a conventionally trained model; it states the 0.84-against-0.88 result as a modest deficit and locates parity at ten per cent.
 
-- **The code-level limitations (§10 and §05).** Reading the source and adding failure modes the vendor did not document — the epochs disagreement between worked example (10), web form (3), server fallback (1) and hardcoded minimum (10); the positional-class fragility whereby reordering classes silently computes damage from the wrong category; the row-position matching that would misattribute damage if the building list is reordered; and the absence of a genuinely held-out validation set in the trained-model route — is exactly the independent scrutiny a reader cannot perform themselves. This is the report's signature strength.
-- **The "wrinkle" in §05.** Flagging that the binary damaged column (any damaged pixel) and the threshold-based assessment (tenth-part) will yield different accuracy figures in the two reports, and that nothing in the documentation warns of it, is a precise, high-value catch.
-- **Honesty about who gets left out (§05, §10).** The report repeatedly and without euphemism connects the 50-square-metre minimum footprint and the weakness of building outlines in the Global South and informal settlements to the fact that these are the populations most exposed to disaster. That equity caveat is stated as a structural fact, not buried.
-- **Precision versus recall (§06).** Refusing to average precision and recall into one figure, and explaining that the two errors carry different humanitarian costs, is both correct and well taught.
-- **The confidence-interval caveat (§05, §10).** Stating plainly that the 95 per cent interval quantifies sampling error only — not mislabelling, misalignment, or systematic model bias — is the kind of honesty that prevents a fast estimate from being mistaken for a survey.
-- **Clean attribution.** The software-versus-report distinction (software is Microsoft's; only the plain-language report is the CoLab's) is stated up front and maintained throughout.
+**3. The gap was framed against only two comparators. [§02] — APPLIED.** §02 now names the xView2 challenge and the automated damage-classification literature built on xBD as the nearer comparator, and states the honest claim: not that nothing existed, but that existing approaches assume a globally pretrained model where HASTE trades that for a disposable per-event one.
 
-## Verdict
+**4. The report never named its strongest structural limitation. [§08, §10] — APPLIED.** §08 opens with "Everything in this section is the developer's own account," and §10 carries the matching limitation. Both were briefly present at full length, which round two flagged as duplication; §10 is now a cross-reference.
 
-Minor revisions. This is a strong, unusually honest technical explainer whose reviewing of the underlying code puts it well above a vendor summary; nothing here threatens its core contribution. The single highest-value revision is to fix the evidence layer: define the "discrimination score" that anchors the headline claim (Major 1), and separate validated accuracy from deployment counts in §08 so the report stops presenting adoption as performance and stops glossing a below-baseline number as parity (Major 2). Those two changes, plus one sentence acknowledging that all performance evidence is developer-reported (Major 4), would bring the report's evidentiary discipline up to the standard its exposition already meets.
+---
+
+## Round two: copyediting and de-duplication (30 July 2026). All findings closed.
+
+Roughly 900 words of duplication removed, plus a pass on sentence-level tics. The file went from 8,856 to 8,576 words before §13 was added, and the cut was entirely repetition.
+
+### Duplication
+
+| # | Finding | Resolution |
+|---|---|---|
+| D1 | The `thesis` field was the Foreword re-typed, four sentences repeated within a screen of each other | Replaced. The thesis now states what the report does (reads the source code, sets out the settings, tests what the figures establish) rather than restaging §00. Deliberately worded to avoid echoing §13's "reallocation of labour" line either. |
+| D2 | "All evidence is developer-supplied" made twice at full length, with one sentence verbatim identical, in §08 and §10 | §08 keeps the full statement; §10 reduced to a cross-reference. |
+| D3 | Cloud exclusion stated five times (§04, §05 twice, §06, §13) | §04's bias clause and the §13 list item cut. §05 keeps the rule and the reasoning; §06 keeps its one-phrase inventory item. |
+| D4 | Human-in-the-loop stated five times, with §01 and §09 giving the same five-item list in the same order | §01 compressed to one sentence pointing at §09; §09's framing clause cut; §02's duplicate proposition removed. |
+| D5 | Per-event non-generalisation stated four times, twice with the same Jamaica-Türkiye example | §01 keeps the full version with the example; §02's first proposition removed; §10 cut to the consequence. |
+| D6 | Eight smaller repeats: flood depth, Overture, coordinate system, GeoTIFF, the 50 square metre minimum, spatial misalignment, the not-authoritative caveat, and the stat-band labels | All resolved as recommended. The §10 "Spatial misalignment is routine" entry was deleted outright as a restatement with no new content; the stat-band labels were cut from miniature essays to figures with section pointers. The 50 square metre clause was kept in both places as the borderline case it was flagged to be. |
+
+### Line editing
+
+- **Throat-clearing (L1):** all seven instances removed, including "This section is the heart of the report", "It is worth stating plainly", "These numbers deserve to be read carefully", and "It is worth knowing that".
+- **Colliding entry names (L2):** "Buffer, nominally 3 metres" and "Buffer distances, 0, 10, and 20 metres" are now "Label buffer" and "Measurement rings", with an explicit note not to confuse them.
+- **Buried variables (L3, L4):** batch size and the 192-pixel crop cap were smuggled into the tails of other entries in a section organised entirely by labelled leads. Both now have their own entries.
+- **Overlong sentences (L4):** §02's "The gap" restructured so it no longer argues with an earlier draft in public; §07's four-clause band-order sentence split.
+- **Wording (L5):** dangling relative clause in §01, "the calculation" without an antecedent in §04, the trailing "The code comments say so explicitly" in §05, the negative opening of "The final estimate", "interfaces that the interface calls" in §11, and §12's four-item negative list converted to bullets.
+- **Passives (L6):** three reversed, including "several files can be uploaded" to "the analyst can upload several files". The normalisation passive was left alone, as flagged.
+- **Tables:** numbered Table 1 and Table 2, and §08 now refers to Table 1 by number rather than "the table below".
+- **Cross-references:** added to §01, §07, §10, and the stat band, which is what made several of the de-duplications possible.
+
+### Internal inconsistencies
+
+1. **Cloud strictness stated two ways (§04 implied a readability judgment, §05 stated an absolute rule) — RESOLVED** by cutting §04's clause.
+2. **§08 said only Rolling Fork carried field ground truth, while the Melissa table was captioned "Validated results" — RESOLVED PROVISIONALLY.** The caption now reads "Table 2. Two of the areas assessed during the Hurricane Melissa response," which removes the contradiction without asserting anything unverified. See open item 1.
+
+---
+
+## Since the reviews: what changed in the report
+
+**§13, "Application: the Mariupol Corridor Severity Model", was added** at the author's request, and the Conclusion renumbered to §14. It describes how HASTE bears on the CoLab's Mariupol Corridor Severity Model, whose infrastructure-damage component interpolates a straight line between five UNOSAT anchor points across a seventy-seven-day siege.
+
+As reviewer I note that the section is written as scoping rather than as a completed integration, and that this is the correct call on the evidence available: HASTE appears nowhere in `Mariupol-Severity-Model-Paper.md` or in the `mariupol-evacuation-model` repository, and the only public claim is the July newsletter's "we are prototyping". A report whose §08 and §10 criticise the developers for not marking the provenance of their evidence cannot itself present prospective work as done. The section states plainly that no HASTE-derived figure currently enters the model, lists five preconditions before one could, and names the risk that a denser damage curve reads as better evidenced than it is. A note in the file header instructs future editors not to upgrade its tense without a result to point at.
+
+**The paper and the published report were reconciled.** `HASTE-Paper.md` in this repository was still the original draft, carrying none of the round-one revisions and none of round two. It has been regenerated from the content module, with all 272 content strings verified present, and an `npm run export:haste-paper` script now renders one from the other so the two cannot silently drift again.
+
+---
+
+## Open items
+
+None of these blocks publication. The first is the only one that requires the author rather than an editor.
+
+1. **[Verification Required] Confirm how the Hurricane Melissa precision and recall figures were validated.** §08 states that only the Rolling Fork assessment carries an accuracy measurement against field ground truth, so the Melissa figures presumably come from HASTE's own human validation sample. If that is right, saying so explicitly in the Table 2 caption is better than the neutral wording now standing in. Check against arXiv:2607.11838.
+
+2. **[Verification Required] "Carried over from earlier in-browser damage-assessment research at the same laboratory" (§02).** The original "emerged from" was vague and was sharpened, but whether the propositions are stated in that earlier work or are the author's reading of it was never confirmed.
+
+3. **§13's tense, when there is a result.** If the prototyping produces assessed dates, sourced imagery, or a validation sample, the section should be rewritten around the actual work, and the note in the file header removed.
+
+4. **Reading-time or length signal.** Absent on a report of this size aimed at practitioners reading under time pressure. Minor.
+
+5. **A source line under the stat band.** The four figures now carry section pointers in their labels, which mostly covers the original suggestion; a single "Figures from §05 and §08" note under the band would finish it.
+
+6. **Paragraph numbering in the generated paper.** Regenerating `HASTE-Paper.md` from the content module replaced the old `5.1.1` and `8.2` style numbering with the published report's structure. Content matches exactly; the numbering convention is gone. Restore it in the generator if it mattered.
+
+---
+
+## What to take forward
+
+**The duplication had a single cause, and naming it is the durable lesson.** Every claim repeated three or four times in the draft was a claim the author cared about: the cloud-exclusion rule, the human in the loop, the per-event model, the provenance of the evidence. Writing each conviction into every section where it could plausibly belong is a generous instinct that backfires in a document read linearly, because emphasis by repetition reads as insecurity about whether the first statement landed. Pick the one section where each conviction is load-bearing, make the full case there, and use a clause and a cross-reference everywhere else.
+
+**Section-independence is a false requirement.** Much of the repetition existed because each section was written to stand alone. Readers of a numbered report do not need that, and cross-references are cheaper than re-explanation. The revised report demonstrates this: adding six cross-references is what allowed several hundred words to come out.
+
+**Trust the reader's attention.** The throat-clearing pattern was the sentence-level version of the same anxiety. The report's sentences are good enough that they do not need to be introduced.
+
+**One habit worth keeping, visible in how round one was handled.** The instruction to add the provenance caveat to "§08 or §10" produced it in both, at full length, which round two then had to remove. When a fix names alternative locations, choose one.
+
+---
 
 ## References
 
-1. Microsoft AI for Good Lab. *HASTE: A Platform for Rapid Post-Disaster Building Damage Assessment.* arXiv:2607.11838. https://arxiv.org/abs/2607.11838 **[Verification Required]**
-2. Microsoft AI for Good Lab. *HASTE*, open-source platform released under the MIT Licence. https://github.com/microsoft/haste
-3. Gupta, R., et al. "Creating xBD: A Dataset for Assessing Building Damage from Satellite Imagery." *CVPR Workshops*, 2019. (xView2 / xBD challenge — the nearest comparator literature referenced in Major 3.)
-4. Rolf, E., et al. "A generalizable and accessible approach to machine learning with global satellite imagery" (MOSAIKS). *Nature Communications*, 2021.
-5. Oquab, M., et al. "DINOv2: Learning Robust Visual Features without Supervision." Meta AI, 2023.
-6. Overture Maps Foundation. Buildings theme. https://overturemaps.org
+1. Microsoft AI for Good Lab. *HASTE: A Platform for Rapid Post-Disaster Building Damage Assessment.* arXiv:2607.11838. **[Verification Required]** — cited from the report under review; the identifier was not independently confirmed.
+2. Rolf, Esther, et al. "A Generalizable and Accessible Approach to Machine Learning with Global Satellite Imagery." *Nature Communications*, vol. 12, 2021.
+3. Oquab, Maxime, et al. "DINOv2: Learning Robust Visual Features without Supervision." Meta AI, 2023.
+4. Gupta, Ritwik, et al. "xBD: A Dataset for Assessing Building Damage from Satellite Imagery." 2019.
+5. Ethical Tech CoLab. *Mariupol Corridor Severity Model.* github.com/Ethical-Tech-CoLab/mariupol-evacuation-model.
 
-*Note on delivery: python-docx cannot emit native Word footnotes, so citations are collected here as a numbered References section and referred to inline, per the skill's Claude Code delivery convention.*
+*Note on format: real Word footnotes are not available through the tooling used to produce this document, so references appear here rather than at the foot of the page.*
